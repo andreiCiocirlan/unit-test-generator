@@ -41,6 +41,7 @@ public class JavaTestRenderer {
 
         source.append("""
                 import java.io.IOException;
+                import java.util.List;
                 import java.util.Optional;
                 import org.junit.jupiter.api.Test;
                 import org.junit.jupiter.api.extension.ExtendWith;
