@@ -44,7 +44,7 @@ class JavaParserAnalyzerTest {
                 .isEqualTo("UserService");
 
         assertThat(result.annotations())
-                .containsExactly("Service");
+                .containsExactly("Service", "RequiredArgsConstructor");
 
         assertThat(result.dependencies())
                 .containsExactly(

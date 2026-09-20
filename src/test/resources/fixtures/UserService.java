@@ -1,4 +1,4 @@
-package com.example.user;
+package fixtures;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
