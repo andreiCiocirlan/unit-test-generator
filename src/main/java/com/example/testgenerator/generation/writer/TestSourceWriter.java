@@ -1,4 +1,4 @@
-package com.example.testgenerator.generation;
+package com.example.testgenerator.generation.writer;
 
 import java.nio.file.Path;
 
