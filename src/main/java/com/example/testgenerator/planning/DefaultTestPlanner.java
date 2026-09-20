@@ -640,13 +640,33 @@ public class DefaultTestPlanner implements TestPlanner {
         if (isWellKnownImmutable(type)) {
             return defaultValueFor(type, null);
         }
+
+        // Real empty collections are almost always what you want as a
+        // default in tests, and they compile.
+        if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
+            return "java.util.List.of()";
+        }
+        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
+            return "java.util.Set.of()";
+        }
+        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
+            return "java.util.Map.of()";
+        }
+
         if (expression.startsWith("new ")) {
             return expression;
         }
+
         if (expression.contains(".")) {
-            return "mock(" + type + ".class)";
+            return "mock(" + eraseGenerics(type) + ".class)";
         }
+
         return expression;
+    }
+
+    private String eraseGenerics(String type) {
+        int idx = type.indexOf('<');
+        return idx < 0 ? type : type.substring(0, idx);
     }
 
     private boolean isWellKnownImmutable(String type) {
