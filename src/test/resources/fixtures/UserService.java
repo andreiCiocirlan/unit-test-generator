@@ -1,21 +1,14 @@
-package fixtures;
+package com.example.user;
 
-import org.apache.catalina.User;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class UserService {
 
     private final UserRepository userRepository;
     private final EmailService emailService;
-
-    public UserService(
-            UserRepository userRepository,
-            EmailService emailService) {
-
-        this.userRepository = userRepository;
-        this.emailService = emailService;
-    }
 
     public User findById(Long id) {
         return userRepository.findById(id)
@@ -25,7 +18,7 @@ public class UserService {
     public User create(String email) {
 
         if (userRepository.existsByEmail(email)) {
-            throw new DuplicateUserException();
+            throw new DuplicateUserException("User with email " + email + " already exists");
         }
 
         User user = new User(email);

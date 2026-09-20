@@ -4,10 +4,8 @@ import com.example.testgenerator.analysis.model.*;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.ConstructorDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
-import com.github.javaparser.ast.body.Parameter;
+import com.github.javaparser.ast.Modifier;
+import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.stmt.IfStmt;
@@ -114,16 +112,47 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
 
         List<DependencyModel> dependencies = new ArrayList<>();
 
-        constructorResolver
-                .resolve(classDeclaration)
-                .ifPresent(constructor ->
-                        addConstructorDependencies(
-                                constructor,
-                                dependencies
-                        )
-                );
+        addFinalFieldDependencies(classDeclaration, dependencies);
+
+        if (dependencies.isEmpty()) {
+            constructorResolver
+                    .resolve(classDeclaration)
+                    .ifPresent(constructor ->
+                            addConstructorDependencies(constructor, dependencies));
+        }
 
         return dependencies;
+    }
+
+    private void addFinalFieldDependencies(
+            ClassOrInterfaceDeclaration classDeclaration,
+            List<DependencyModel> dependencies) {
+
+        for (FieldDeclaration field : classDeclaration.getFields()) {
+
+            boolean isPrivate = field.hasModifier(Modifier.Keyword.PRIVATE);
+            boolean isFinal   = field.hasModifier(Modifier.Keyword.FINAL);
+
+            if (!isPrivate || !isFinal) {
+                continue;
+            }
+
+            // Skip static fields (e.g. constants) — they aren't injected
+            if (field.hasModifier(Modifier.Keyword.STATIC)) {
+                continue;
+            }
+
+            for (VariableDeclarator variable : field.getVariables()) {
+
+                dependencies.add(
+                        new DependencyModel(
+                                variable.getTypeAsString(),
+                                variable.getNameAsString(),
+                                DependencyKind.MOCK
+                        )
+                );
+            }
+        }
     }
 
     private void addConstructorDependencies(
