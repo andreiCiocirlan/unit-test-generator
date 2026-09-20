@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Component
@@ -79,6 +80,40 @@ public class DefaultTestPlanner implements TestPlanner {
         return scenarios;
     }
 
+    private String guardDisplayName(
+            MethodModel method,
+            ConditionModel condition,
+            String exceptionType) {
+
+        String discriminator = discriminatorFor(condition, method);
+        return method.name()
+               + " should throw " + exceptionType
+               + (discriminator.isEmpty() ? "" : " when " + discriminator);
+    }
+
+    private String discriminatorFor(
+            ConditionModel condition,
+            MethodModel method) {
+
+        // 1. Prefer a dependency call that uniquely identifies this condition.
+        for (MethodCallModel call : condition.methodCalls()) {
+            if (call.kind() == CallKind.DEPENDENCY) {
+                return call.target() + "." + call.methodName();
+            }
+        }
+
+        // 2. Fall back to a parameter name.
+        for (ParameterModel p : method.parameters()) {
+            if (condition.expression().contains(p.name())) {
+                return "parameter " + p.name();
+            }
+        }
+
+        // 3. Fall back to the condition text.
+        String expr = condition.expression().replaceAll("\\s+", " ").trim();
+        return expr.length() > 40 ? expr.substring(0, 40) : expr;
+    }
+
     // -----------------------------------------------------------------
     // Guard clause scenarios
     // -----------------------------------------------------------------
@@ -126,7 +161,7 @@ public class DefaultTestPlanner implements TestPlanner {
 
         return new TestScenario(
                 method.name(),
-                method.name() + " should throw " + exceptionType,
+                guardDisplayName(method, condition, exceptionType),
                 method.returnType(),
                 method.declaredThrows(),
                 method.parameters(),
@@ -572,19 +607,29 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private List<AssignmentModel> requiredAssignments(MethodModel method) {
 
-        List<String> requiredVariables = new ArrayList<>();
+        List<String> referenced = new ArrayList<>();
 
         method.returns().stream()
                 .map(ReturnModel::expression)
-                .forEach(requiredVariables::add);
+                .forEach(referenced::add);
 
         method.methodCalls().stream()
                 .flatMap(call -> call.arguments().stream())
-                .forEach(requiredVariables::add);
+                .forEach(referenced::add);
+
+        method.throwsStatements().stream()
+                .map(ThrowModel::expression)
+                .forEach(referenced::add);
+
+        method.conditions().stream()
+                .map(ConditionModel::expression)
+                .forEach(referenced::add);
 
         return method.assignments().stream()
-                .filter(a -> requiredVariables.contains(a.variableName())
-                             || a.expression().startsWith("new "))
+                .filter(a -> referenced.stream().anyMatch(expr ->
+                        Pattern.compile("\\b" + Pattern.quote(a.variableName()) + "\\b")
+                                .matcher(expr).find()))
+                .filter(a -> !a.expression().isBlank())
                 .toList();
     }
 

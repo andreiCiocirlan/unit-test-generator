@@ -290,6 +290,7 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
     private List<AssignmentModel> extractAssignments(MethodDeclaration method) {
         return method.findAll(VariableDeclarationExpr.class)
                 .stream()
+                .filter(vd -> !isForInitializer(vd))
                 .flatMap(variableDeclaration ->
                         variableDeclaration.getVariables().stream()
                                 .map(variable -> new AssignmentModel(
@@ -302,6 +303,13 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
                                 ))
                 )
                 .toList();
+    }
+
+    private boolean isForInitializer(VariableDeclarationExpr vd) {
+        return vd.getParentNode()
+                .filter(p -> p instanceof ForStmt)
+                .map(p -> ((ForStmt) p).getInitialization().contains(vd))
+                .orElse(false);
     }
 
     private List<TryModel> extractTries(
