@@ -297,17 +297,11 @@ public class JavaTestRenderer {
                     .append(");\n");
 
         } else {
-
+            // void case
             source.append("        ")
-                    .append(toVariableName(
-                            model.classUnderTest()
-                    ))
-                    .append(".")
-                    .append(scenario.methodName())
-                    .append("(")
-                    .append(renderMethodArguments(scenario))
-                    .append(");\n\n");
-
+                    .append(toVariableName(model.classUnderTest()))
+                    .append(".").append(scenario.methodName())
+                    .append("(").append(renderMethodArguments(scenario)).append(");\n\n");
             source.append("        // Then\n");
         }
 

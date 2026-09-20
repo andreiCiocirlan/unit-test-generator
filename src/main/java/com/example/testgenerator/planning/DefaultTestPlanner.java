@@ -322,7 +322,7 @@ public class DefaultTestPlanner implements TestPlanner {
             // opposite value, but since the test doesn't currently stub
             // them, Mockito's default (false) is what trips them off.
             // We still stub them explicitly to be deterministic.
-            if (guardCallKeys.contains(callKey(call))) {
+            if (guardCallKeys.contains(callKey(call)) && call.kind() == CallKind.DEPENDENCY) {
                 setups.add(new MockSetup(
                         call.target(),
                         call.targetType(),
@@ -474,6 +474,9 @@ public class DefaultTestPlanner implements TestPlanner {
     private ExpectedOutcome createNormalExpectedOutcome(MethodModel method) {
 
         for (MethodCallModel call : method.methodCalls()) {
+            if ("void".equals(method.returnType())) {
+                return new ExpectedOutcome(OutcomeKind.VOID, "");
+            }
             if (isOptionalOrElseThrow(method, call)) {
                 return new ExpectedOutcome(
                         OutcomeKind.RETURN_VALUE,
@@ -586,18 +589,29 @@ public class DefaultTestPlanner implements TestPlanner {
     }
 
     private String createInitialization(AssignmentModel assignment) {
-
         String expression = assignment.expression();
+        String type = assignment.variableType();
 
+        if (isWellKnownImmutable(type)) {
+            return defaultValueFor(type, null);
+        }
         if (expression.startsWith("new ")) {
             return expression;
         }
-
         if (expression.contains(".")) {
-            return "mock(" + assignment.variableType() + ".class)";
+            return "mock(" + type + ".class)";
         }
-
         return expression;
+    }
+
+    private boolean isWellKnownImmutable(String type) {
+        return switch (type) {
+            case "String", "Long", "Integer", "int", "long",
+                 "Double", "double", "Float", "float",
+                 "Boolean", "boolean", "Short", "short",
+                 "Byte", "byte", "Character", "char" -> true;
+            default -> false;
+        };
     }
 
     private String defaultValueFor(
