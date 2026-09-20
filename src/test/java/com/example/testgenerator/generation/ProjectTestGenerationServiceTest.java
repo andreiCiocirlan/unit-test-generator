@@ -1,5 +1,6 @@
 package com.example.testgenerator.generation;
 
+import com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer;
 import com.example.testgenerator.execution.*;
 import com.example.testgenerator.generation.model.GeneratedTest;
 import com.example.testgenerator.generation.writer.JavaTestSourceWriter;
@@ -55,7 +56,7 @@ class ProjectTestGenerationServiceTest {
                         new com.example.testgenerator.analysis.SpringTypeClassifier(),
                         new com.example.testgenerator.analysis.ConstructorResolver(),
                         new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(),
-                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer()
+                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(new JavaParserMethodCallAnalyzer())
                 );
 
         var generationService =

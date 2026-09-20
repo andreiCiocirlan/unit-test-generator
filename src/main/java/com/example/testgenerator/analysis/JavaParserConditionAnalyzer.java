@@ -1,6 +1,7 @@
 package com.example.testgenerator.analysis;
 
 import com.example.testgenerator.analysis.model.ConditionModel;
+import com.example.testgenerator.analysis.model.DependencyModel;
 import com.example.testgenerator.analysis.model.MethodCallModel;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.stmt.IfStmt;
@@ -12,16 +13,25 @@ import java.util.List;
 @Component
 public class JavaParserConditionAnalyzer implements ConditionAnalyzer {
 
-    @Override
-    public ConditionModel analyze(IfStmt ifStmt) {
+    private final MethodCallAnalyzer methodCallAnalyzer;
 
-        String expression =
-                ifStmt.getCondition().toString();
+    public JavaParserConditionAnalyzer(
+            MethodCallAnalyzer methodCallAnalyzer) {
+        this.methodCallAnalyzer = methodCallAnalyzer;
+    }
+
+    @Override
+    public ConditionModel analyze(
+            IfStmt ifStmt,
+            List<DependencyModel> dependencies) {
+
+        String expression = ifStmt.getCondition().toString();
 
         List<MethodCallModel> methodCalls =
                 ifStmt.findAll(MethodCallExpr.class)
                         .stream()
-                        .map(this::toMethodCallModel)
+                        .map(call ->
+                                methodCallAnalyzer.analyze(call, dependencies))
                         .toList();
 
         List<String> thrownExceptions =
@@ -37,40 +47,13 @@ public class JavaParserConditionAnalyzer implements ConditionAnalyzer {
         );
     }
 
-    private MethodCallModel toMethodCallModel(
-            MethodCallExpr methodCall) {
-
-        String target = methodCall.getScope()
-                .map(Object::toString)
-                .orElse("");
-
-        List<String> arguments =
-                methodCall.getArguments()
-                        .stream()
-                        .map(Object::toString)
-                        .toList();
-
-        return new MethodCallModel(
-                target,
-                methodCall.getNameAsString(),
-                arguments,
-                null
-        );
-    }
-
-    private String extractExceptionType(
-            ThrowStmt throwStmt) {
-
-        if (throwStmt.getExpression()
-                .isObjectCreationExpr()) {
-
+    private String extractExceptionType(ThrowStmt throwStmt) {
+        if (throwStmt.getExpression().isObjectCreationExpr()) {
             return throwStmt.getExpression()
                     .asObjectCreationExpr()
                     .getType()
                     .asString();
         }
-
-        return throwStmt.getExpression()
-                .toString();
+        return throwStmt.getExpression().toString();
     }
 }

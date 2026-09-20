@@ -21,7 +21,7 @@ class JavaParserAnalyzerTest {
                 new SpringTypeClassifier(),
                 new ConstructorResolver(),
                 new JavaParserMethodCallAnalyzer(),
-                new JavaParserConditionAnalyzer()
+                new JavaParserConditionAnalyzer(new JavaParserMethodCallAnalyzer())
         );
     }
 

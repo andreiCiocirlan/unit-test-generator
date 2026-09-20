@@ -212,7 +212,8 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
         List<ConditionModel> conditions =
                 method.findAll(IfStmt.class)
                         .stream()
-                        .map(conditionAnalyzer::analyze)
+                        .map(condition ->
+                                conditionAnalyzer.analyze(condition, dependencies))
                         .toList();
 
         List<ReturnModel> returns =
@@ -295,41 +296,7 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
                 .toList();
     }
 
-    private MethodCallModel toMethodCallModel(
-            MethodCallExpr methodCall,
-            List<DependencyModel> dependencies) {
 
-        String target = methodCall.getScope()
-                .map(Object::toString)
-                .map(this::normalizeTarget)
-                .orElse("");
 
-        CallKind kind = dependencies.stream()
-                .anyMatch(dependency ->
-                        dependency.name().equals(target))
-                ? CallKind.DEPENDENCY
-                : CallKind.UNKNOWN;
 
-        List<String> arguments =
-                methodCall.getArguments()
-                        .stream()
-                        .map(Object::toString)
-                        .toList();
-
-        return new MethodCallModel(
-                target,
-                methodCall.getNameAsString(),
-                arguments,
-                kind
-        );
-    }
-
-    private String normalizeTarget(String target) {
-
-        if (target.startsWith("this.")) {
-            return target.substring("this.".length());
-        }
-
-        return target;
-    }
 }
