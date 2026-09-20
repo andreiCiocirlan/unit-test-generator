@@ -1,10 +1,8 @@
 package com.example.testgenerator.generation;
 
-import com.example.testgenerator.execution.CompilationResult;
-import com.example.testgenerator.execution.GeneratedTestCompiler;
-import com.example.testgenerator.execution.GeneratedTestExecutor;
-import com.example.testgenerator.execution.ExecutionResult;
+import com.example.testgenerator.execution.*;
 import com.example.testgenerator.generation.model.GeneratedTest;
+import com.example.testgenerator.generation.writer.JavaTestSourceWriter;
 import com.example.testgenerator.generation.writer.TestSourceWriter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,13 +37,75 @@ class ProjectTestGenerationServiceTest {
     private ProjectTestGenerationService service;
 
     @Test
+    void shouldGenerateAndCompileUserServiceIntegrationTest() {
+
+        Path projectRoot =
+                Path.of(
+                        "C:\\Users\\andre\\IdeaProjects\\book"
+                );
+
+        Path sourceFile =
+                projectRoot.resolve(
+                        "src/main/java/com/example/user/UserService.java"
+                );
+
+        // We'll use the real Spring components here.
+        var analyzer =
+                new com.example.testgenerator.analysis.JavaParserAnalyzer(
+                        new com.example.testgenerator.analysis.SpringTypeClassifier(),
+                        new com.example.testgenerator.analysis.ConstructorResolver(),
+                        new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(),
+                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer()
+                );
+
+        var generationService =
+                new TestGenerationService(
+                        analyzer,
+                        new com.example.testgenerator.planning.DefaultTestPlanner(),
+                        new JavaTestRenderer(),
+                        new com.example.testgenerator.execution.JavaParserGeneratedTestValidator()
+                );
+
+        var sourceWriter =
+                new JavaTestSourceWriter();
+
+        GeneratedTestCompiler compiler =
+                new com.example.testgenerator.execution.MavenGeneratedTestCompiler();
+
+        GeneratedTestExecutor executor =
+                new MavenGeneratedTestExecutor();
+
+        var service =
+                new ProjectTestGenerationService(
+                        generationService,
+                        sourceWriter,
+                        compiler,
+                        executor
+                );
+
+        ExecutionResult result =
+                service.generateAndTest(
+                        projectRoot,
+                        sourceFile
+                );
+
+        assertThat(result.successful())
+                .isTrue();
+
+    }
+
+    @Test
     void shouldGenerateCompileAndExecuteTest() {
 
         Path projectRoot =
-                Path.of("project");
+                Path.of(
+                        "C:\\Users\\andre\\IdeaProjects\\book"
+                );
 
         Path sourceFile =
-                Path.of("UserService.java");
+                projectRoot.resolve(
+                        "src/main/java/com/example/user/UserService.java"
+                );
 
         GeneratedTest generatedTest =
                 new GeneratedTest(
@@ -127,10 +187,14 @@ class ProjectTestGenerationServiceTest {
     void shouldNotExecuteWhenCompilationFails() {
 
         Path projectRoot =
-                Path.of("project");
+                Path.of(
+                        "C:\\Users\\andre\\IdeaProjects\\book"
+                );
 
         Path sourceFile =
-                Path.of("UserService.java");
+                projectRoot.resolve(
+                        "src/main/java/com/example/user/UserService.java"
+                );
 
         GeneratedTest generatedTest =
                 new GeneratedTest(
