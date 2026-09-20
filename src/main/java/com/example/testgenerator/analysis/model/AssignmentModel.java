@@ -3,6 +3,6 @@ package com.example.testgenerator.analysis.model;
 public record AssignmentModel(
         String variableName,
         String variableType,
-        String expression
-) {
-}
+        String expression,
+        StatementContext context
+) {}

@@ -8,9 +8,7 @@ import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
-import com.github.javaparser.ast.stmt.IfStmt;
-import com.github.javaparser.ast.stmt.ReturnStmt;
-import com.github.javaparser.ast.stmt.ThrowStmt;
+import com.github.javaparser.ast.stmt.*;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -25,6 +23,7 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
     private final ConstructorResolver constructorResolver;
     private final MethodCallAnalyzer methodCallAnalyzer;
     private final ConditionAnalyzer conditionAnalyzer;
+    private final StatementContextResolver contextResolver = new StatementContextResolver();
 
     public JavaParserAnalyzer(
             SpringTypeClassifier springTypeClassifier,
@@ -187,116 +186,202 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
             MethodDeclaration method,
             List<DependencyModel> dependencies) {
 
-        List<ParameterModel> parameters =
-                method.getParameters()
-                        .stream()
-                        .map(parameter ->
-                                new ParameterModel(
-                                        parameter.getTypeAsString(),
-                                        parameter.getNameAsString()
-                                )
-                        )
-                        .toList();
+        List<String> annotations = method.getAnnotations()
+                .stream()
+                .map(a -> a.getNameAsString())
+                .toList();
 
-        List<MethodCallModel> methodCalls =
-                method.findAll(MethodCallExpr.class)
-                        .stream()
-                        .map(call ->
-                                methodCallAnalyzer.analyze(
-                                        call,
-                                        dependencies
-                                )
-                        )
-                        .toList();
+        List<String> declaredThrows = method.getThrownExceptions()
+                .stream()
+                .map(Object::toString)
+                .toList();
 
-        List<ConditionModel> conditions =
-                method.findAll(IfStmt.class)
-                        .stream()
-                        .map(condition ->
-                                conditionAnalyzer.analyze(condition, dependencies))
-                        .toList();
+        List<ParameterModel> parameters = method.getParameters()
+                .stream()
+                .map(p -> new ParameterModel(
+                        p.getTypeAsString(),
+                        p.getNameAsString()))
+                .toList();
 
-        List<ReturnModel> returns =
-                method.findAll(ReturnStmt.class)
-                        .stream()
-                        .map(returnStmt ->
-                                new ReturnModel(
-                                        returnStmt
-                                                .getExpression()
-                                                .map(Object::toString)
-                                                .orElse("")
-                                )
-                        )
-                        .toList();
+        List<MethodCallModel> methodCalls = extractMethodCalls(
+                method, dependencies);
 
-        List<AssignmentModel> assignments =
-                extractAssignments(method);
+        List<ConditionModel> conditions = extractConditions(
+                method, dependencies);
 
-        List<ThrowModel> throwsStatements =
-                method.findAll(ThrowStmt.class)
-                        .stream()
-                        .map(this::toThrowModel)
-                        .toList();
+        List<TryModel> tries = extractTries(
+                method, dependencies);
+
+        List<ReturnModel> returns = extractReturns(method);
+
+        List<AssignmentModel> assignments = extractAssignments(method);
+
+        List<ThrowModel> throwsStatements = extractThrows(method);
 
         return new MethodModel(
                 method.getNameAsString(),
                 method.getTypeAsString(),
+                annotations,
+                declaredThrows,
                 parameters,
                 methodCalls,
                 conditions,
+                tries,
                 returns,
                 assignments,
                 throwsStatements
         );
     }
 
-    private ThrowModel toThrowModel(
-            ThrowStmt throwStmt) {
+    private List<MethodCallModel> extractMethodCalls(
+            MethodDeclaration method,
+            List<DependencyModel> dependencies) {
 
-        String expression =
-                throwStmt.getExpression().toString();
-
-        String exceptionType = "";
-
-        if (throwStmt.getExpression()
-                .isObjectCreationExpr()) {
-
-            exceptionType =
-                    throwStmt.getExpression()
-                            .asObjectCreationExpr()
-                            .getType()
-                            .asString();
-        }
-
-        return new ThrowModel(
-                exceptionType,
-                expression
-        );
+        return method.findAll(MethodCallExpr.class)
+                .stream()
+                .map(call -> methodCallAnalyzer.analyze(call, dependencies))
+                .toList();
     }
 
-    private List<AssignmentModel> extractAssignments(
-            MethodDeclaration method) {
+    private List<ConditionModel> extractConditions(
+            MethodDeclaration method,
+            List<DependencyModel> dependencies) {
 
+        return method.findAll(IfStmt.class)
+                .stream()
+                .map(condition ->
+                        conditionAnalyzer.analyze(condition, dependencies))
+                .toList();
+    }
+
+    private List<ReturnModel> extractReturns(MethodDeclaration method) {
+        return method.findAll(ReturnStmt.class)
+                .stream()
+                .map(returnStmt -> new ReturnModel(
+                        returnStmt.getExpression()
+                                .map(Object::toString)
+                                .orElse(""),
+                        contextResolver.resolve(returnStmt)
+                ))
+                .toList();
+    }
+
+    private List<ThrowModel> extractThrows(MethodDeclaration method) {
+        return method.findAll(ThrowStmt.class)
+                .stream()
+                .map(throwStmt -> new ThrowModel(
+                        exceptionTypeOf(throwStmt),
+                        throwStmt.getExpression().toString(),
+                        contextResolver.resolve(throwStmt)
+                ))
+                .toList();
+    }
+
+    private String exceptionTypeOf(ThrowStmt throwStmt) {
+        if (throwStmt.getExpression().isObjectCreationExpr()) {
+            return throwStmt.getExpression()
+                    .asObjectCreationExpr()
+                    .getType()
+                    .asString();
+        }
+        return "";
+    }
+
+    private List<AssignmentModel> extractAssignments(MethodDeclaration method) {
         return method.findAll(VariableDeclarationExpr.class)
                 .stream()
                 .flatMap(variableDeclaration ->
-                        variableDeclaration
-                                .getVariables()
-                                .stream()
-                                .map(variable ->
-                                        new AssignmentModel(
-                                                variable.getNameAsString(),
-                                                variable.getTypeAsString(),
-                                                variable.getInitializer()
-                                                        .map(Object::toString)
-                                                        .orElse("")
-                                        )
-                                )
+                        variableDeclaration.getVariables().stream()
+                                .map(variable -> new AssignmentModel(
+                                        variable.getNameAsString(),
+                                        variable.getTypeAsString(),
+                                        variable.getInitializer()
+                                                .map(Object::toString)
+                                                .orElse(""),
+                                        contextResolver.resolve(variable)
+                                ))
                 )
                 .toList();
     }
 
+    private List<TryModel> extractTries(
+            MethodDeclaration method,
+            List<DependencyModel> dependencies) {
 
+        return method.findAll(TryStmt.class)
+                .stream()
+                .map(tryStmt -> toTryModel(tryStmt, dependencies))
+                .toList();
+    }
+
+    private TryModel toTryModel(
+            TryStmt tryStmt,
+            List<DependencyModel> dependencies) {
+
+        var body = tryStmt.getTryBlock();
+
+        List<MethodCallModel> bodyCalls = body
+                .findAll(MethodCallExpr.class).stream()
+                .map(call -> methodCallAnalyzer.analyze(call, dependencies))
+                .toList();
+
+        List<ReturnModel> bodyReturns = body
+                .findAll(ReturnStmt.class).stream()
+                .map(r -> new ReturnModel(
+                        r.getExpression().map(Object::toString).orElse(""),
+                        contextResolver.resolve(r)))
+                .toList();
+
+        List<ThrowModel> bodyThrows = body
+                .findAll(ThrowStmt.class).stream()
+                .map(t -> new ThrowModel(
+                        exceptionTypeOf(t),
+                        t.getExpression().toString(),
+                        contextResolver.resolve(t)))
+                .toList();
+
+        List<CatchModel> catches = tryStmt.getCatchClauses()
+                .stream()
+                .map(catchClause -> toCatchModel(catchClause, dependencies))
+                .toList();
+
+        return new TryModel(bodyCalls, bodyReturns, bodyThrows, catches);
+    }
+
+    private CatchModel toCatchModel(
+            CatchClause catchClause,
+            List<DependencyModel> dependencies) {
+
+        var body = catchClause.getBody();
+
+        List<MethodCallModel> calls = body
+                .findAll(MethodCallExpr.class).stream()
+                .map(call -> methodCallAnalyzer.analyze(call, dependencies))
+                .toList();
+
+        List<ReturnModel> returns = body
+                .findAll(ReturnStmt.class).stream()
+                .map(r -> new ReturnModel(
+                        r.getExpression().map(Object::toString).orElse(""),
+                        contextResolver.resolve(r)))
+                .toList();
+
+        List<ThrowModel> throwsStatements = body
+                .findAll(ThrowStmt.class).stream()
+                .map(t -> new ThrowModel(
+                        exceptionTypeOf(t),
+                        t.getExpression().toString(),
+                        contextResolver.resolve(t)))
+                .toList();
+
+        return new CatchModel(
+                catchClause.getParameter().getType().asString(),
+                catchClause.getParameter().getNameAsString(),
+                calls,
+                returns,
+                throwsStatements
+        );
+    }
 
 
 }

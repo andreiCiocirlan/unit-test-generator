@@ -1,6 +1,7 @@
 package com.example.testgenerator.generation;
 
 import com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer;
+import com.example.testgenerator.analysis.StatementContextResolver;
 import com.example.testgenerator.execution.*;
 import com.example.testgenerator.generation.model.GeneratedTest;
 import com.example.testgenerator.generation.writer.JavaTestSourceWriter;
@@ -51,12 +52,14 @@ class ProjectTestGenerationServiceTest {
                 );
 
         // We'll use the real Spring components here.
+        StatementContextResolver contextResolver = new StatementContextResolver();
+        JavaParserMethodCallAnalyzer methodCallAnalyzer = new JavaParserMethodCallAnalyzer(contextResolver);
         var analyzer =
                 new com.example.testgenerator.analysis.JavaParserAnalyzer(
                         new com.example.testgenerator.analysis.SpringTypeClassifier(),
                         new com.example.testgenerator.analysis.ConstructorResolver(),
-                        new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(),
-                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(new JavaParserMethodCallAnalyzer())
+                        new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(contextResolver),
+                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(methodCallAnalyzer)
                 );
 
         var generationService =

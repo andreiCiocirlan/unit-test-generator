@@ -17,11 +17,13 @@ class JavaParserAnalyzerTest {
 
     @BeforeEach
     void setUp() {
+        StatementContextResolver contextResolver = new StatementContextResolver();
+        JavaParserMethodCallAnalyzer methodCallAnalyzer = new JavaParserMethodCallAnalyzer(contextResolver);
         analyzer = new JavaParserAnalyzer(
                 new SpringTypeClassifier(),
                 new ConstructorResolver(),
-                new JavaParserMethodCallAnalyzer(),
-                new JavaParserConditionAnalyzer(new JavaParserMethodCallAnalyzer())
+                methodCallAnalyzer,
+                new JavaParserConditionAnalyzer(methodCallAnalyzer)
         );
     }
 
