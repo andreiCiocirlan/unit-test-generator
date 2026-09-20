@@ -213,18 +213,33 @@ public class DefaultTestPlanner implements TestPlanner {
             MethodCallModel call,
             MethodModel method) {
 
+        if (isOptionalOrElseThrow(
+                method,
+                call)) {
+
+            return new MockSetup(
+                    call.target(),
+                    call.methodName(),
+                    normalizeArguments(
+                            call.arguments(),
+                            method
+                    ),
+                    MockAction.RETURN,
+                    "Optional.of("
+                    + optionalExpectedVariable(
+                            method,
+                            call
+                    )
+                    + ")"
+            );
+        }
+
         String value =
                 findReturnValue(
                         call,
                         method
                 );
 
-        /*
-         * For now, treat calls with a known return
-         * assignment as RETURN.
-         *
-         * Void methods are handled as VERIFY.
-         */
         if (!value.equals("null")) {
 
             return new MockSetup(
@@ -307,13 +322,22 @@ public class DefaultTestPlanner implements TestPlanner {
     private ExpectedOutcome createNormalExpectedOutcome(
             MethodModel method) {
 
-        /*
-         * Do not use method.throwsStatements() here.
-         *
-         * A throw inside a condition belongs to the
-         * exception scenario for that condition. It does
-         * not mean every execution of the method throws.
-         */
+        for (MethodCallModel call :
+                method.methodCalls()) {
+
+            if (isOptionalOrElseThrow(
+                    method,
+                    call)) {
+
+                return new ExpectedOutcome(
+                        OutcomeKind.RETURN_VALUE,
+                        optionalExpectedVariable(
+                                method,
+                                call
+                        )
+                );
+            }
+        }
 
         if (!method.returns().isEmpty()) {
 
@@ -353,6 +377,33 @@ public class DefaultTestPlanner implements TestPlanner {
                         )
                         .toList()
         );
+
+        for (MethodCallModel call :
+                method.methodCalls()) {
+
+            if (!isOptionalOrElseThrow(
+                    method,
+                    call)) {
+
+                continue;
+            }
+
+            String variableName =
+                    optionalExpectedVariable(
+                            method,
+                            call
+                    );
+
+            testData.add(
+                    new TestData(
+                            variableName,
+                            method.returnType(),
+                            "mock("
+                            + method.returnType()
+                            + ".class)"
+                    )
+            );
+        }
 
         for (AssignmentModel assignment :
                 requiredAssignments(method)) {
@@ -465,5 +516,39 @@ public class DefaultTestPlanner implements TestPlanner {
             default ->
                     "null";
         };
+    }
+
+    private boolean isOptionalOrElseThrow(
+            MethodModel method,
+            MethodCallModel call) {
+
+        if (call.kind() != CallKind.DEPENDENCY) {
+            return false;
+        }
+
+        return method.returns()
+                .stream()
+                .map(ReturnModel::expression)
+                .anyMatch(expression ->
+                        expression.contains(
+                                call.target()
+                                + "."
+                                + call.methodName()
+                        )
+                        && expression.endsWith(
+                                ".orElseThrow()"
+                        )
+                );
+    }
+
+    private String optionalExpectedVariable(
+            MethodModel method,
+            MethodCallModel call) {
+
+        return "expected"
+               + Character.toUpperCase(
+                method.returnType().charAt(0)
+        )
+               + method.returnType().substring(1);
     }
 }
