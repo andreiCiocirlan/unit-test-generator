@@ -570,7 +570,7 @@ public class DefaultTestPlanner implements TestPlanner {
             if (parameter.name().equals(nullCheckedParam)) {
                 initialization = "null";
             } else {
-                initialization = defaultValueFor(parameter.type(), condition);
+                initialization = parameterInitializer(parameter);
             }
 
             testData.add(new TestData(
@@ -735,6 +735,32 @@ public class DefaultTestPlanner implements TestPlanner {
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
+    private String parameterInitializer(ParameterModel parameter) {
+        String type = parameter.type();
+
+        if (isWellKnownImmutable(type)) {
+            return defaultValueFor(type, null);
+        }
+
+        return dtoInitializer(type);
+    }
+
+    private String dtoInitializer(String type) {
+        return "initialize" + capitalize(simpleName(type)) + "(); // TODO";
+    }
+
+    private String simpleName(String type) {
+        if (type == null || type.isBlank()) return type;
+        int generic = type.indexOf('<');
+        String noGenerics = generic < 0 ? type : type.substring(0, generic);
+        int lastDot = noGenerics.lastIndexOf('.');
+        return lastDot < 0 ? noGenerics : noGenerics.substring(lastDot + 1);
+    }
+
+    private String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
 
     private boolean isOptionalOrElseThrow(
             MethodModel method,
