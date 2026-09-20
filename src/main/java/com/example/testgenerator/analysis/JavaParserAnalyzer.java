@@ -1,6 +1,7 @@
 package com.example.testgenerator.analysis;
 
 import com.example.testgenerator.analysis.model.*;
+import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
@@ -76,6 +77,7 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
 
     private CompilationUnit parse(Path sourceFile) {
         try {
+            StaticJavaParser.getParserConfiguration().setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21);
             return StaticJavaParser.parse(sourceFile);
         } catch (IOException e) {
             throw new IllegalStateException(
