@@ -5,6 +5,6 @@ import java.util.List;
 public record ConditionModel(
         String expression,
         List<MethodCallModel> methodCalls,
-        List<String> thrownExceptions
-) {
-}
+        List<String> thrownExceptions,
+        StatementContext context
+) {}

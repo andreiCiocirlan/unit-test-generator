@@ -23,7 +23,7 @@ class JavaParserAnalyzerTest {
                 new SpringTypeClassifier(),
                 new ConstructorResolver(),
                 methodCallAnalyzer,
-                new JavaParserConditionAnalyzer(methodCallAnalyzer)
+                new JavaParserConditionAnalyzer(methodCallAnalyzer, contextResolver)
         );
     }
 

@@ -40,6 +40,7 @@ public class JavaTestRenderer {
             StringBuilder source) {
 
         source.append("""
+                import java.io.IOException;
                 import java.util.Optional;
                 import org.junit.jupiter.api.Test;
                 import org.junit.jupiter.api.extension.ExtendWith;
@@ -125,10 +126,16 @@ public class JavaTestRenderer {
         source.append("    @Test\n");
 
         source.append("    void ")
-                .append(toMethodName(
-                        scenario.displayName()
-                ))
-                .append("() {\n\n");
+                .append(toMethodName(scenario.displayName()))
+                .append("()");
+
+        if (scenario.expectedOutcome().kind() != OutcomeKind.THROW_EXCEPTION
+            && !scenario.declaredThrows().isEmpty()) {
+            source.append(" throws ")
+                    .append(String.join(", ", scenario.declaredThrows()));
+        }
+
+        source.append(" {\n\n");
 
         renderGiven(
                 source,
@@ -155,26 +162,30 @@ public class JavaTestRenderer {
                 scenario
         );
 
-        for (MockSetup setup :
-                scenario.mockSetups()) {
+        for (MockSetup setup : scenario.mockSetups()) {
 
-            if (setup.action() != MockAction.RETURN) {
+            if (setup.action() == MockAction.RETURN) {
+                source.append("        when(")
+                        .append(setup.dependency()).append(".")
+                        .append(setup.method()).append("(")
+                        .append(String.join(", ", setup.arguments()))
+                        .append("))")
+                        .append(".thenReturn(")
+                        .append(setup.value())
+                        .append(");\n");
                 continue;
             }
 
-            source.append("        when(")
-                    .append(setup.dependency())
-                    .append(".")
-                    .append(setup.method())
-                    .append("(")
-                    .append(String.join(
-                            ", ",
-                            setup.arguments()
-                    ))
-                    .append("))")
-                    .append(".thenReturn(")
-                    .append(setup.value())
-                    .append(");\n");
+            if (setup.action() == MockAction.THROW) {
+                source.append("        when(")
+                        .append(setup.dependency()).append(".")
+                        .append(setup.method()).append("(")
+                        .append(String.join(", ", setup.arguments()))
+                        .append("))")
+                        .append(".thenThrow(")
+                        .append(setup.value())
+                        .append(".class);\n");
+            }
         }
 
         source.append("\n");
@@ -251,6 +262,8 @@ public class JavaTestRenderer {
         source.append("                .isInstanceOf(")
                 .append(outcome.value())
                 .append(".class);\n");
+
+        renderVerifications(source, scenario);
     }
 
     private void renderSuccessScenario(
@@ -339,19 +352,6 @@ public class JavaTestRenderer {
                 .stream()
                 .map(ParameterModel::name)
                 .collect(Collectors.joining(", "));
-    }
-
-    private String resolveReturnType(
-            ExpectedOutcome outcome) {
-
-        /*
-         * Temporary implementation.
-         *
-         * The renderer doesn't yet know the method's
-         * return type. This will be resolved when the
-         * render model includes MethodModel information.
-         */
-        return "var";
     }
 
     private String toVariableName(

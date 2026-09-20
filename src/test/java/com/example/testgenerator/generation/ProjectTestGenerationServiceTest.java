@@ -48,7 +48,8 @@ class ProjectTestGenerationServiceTest {
 
         Path sourceFile =
                 projectRoot.resolve(
-                        "src/main/java/com/example/user/UserService.java"
+//                        "src/main/java/com/example/user/UserService.java"
+                        "src/main/java/com/example/order/OrderService.java"
                 );
 
         // We'll use the real Spring components here.
@@ -59,7 +60,7 @@ class ProjectTestGenerationServiceTest {
                         new com.example.testgenerator.analysis.SpringTypeClassifier(),
                         new com.example.testgenerator.analysis.ConstructorResolver(),
                         new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(contextResolver),
-                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(methodCallAnalyzer)
+                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(methodCallAnalyzer, contextResolver)
                 );
 
         var generationService =

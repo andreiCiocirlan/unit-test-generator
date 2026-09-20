@@ -34,7 +34,7 @@ class JavaTestRendererTest {
                 new SpringTypeClassifier(),
                 new ConstructorResolver(),
                 new JavaParserMethodCallAnalyzer(contextResolver),
-                new JavaParserConditionAnalyzer(methodCallAnalyzer)
+                new JavaParserConditionAnalyzer(methodCallAnalyzer, contextResolver)
         );
 
         testPlanner =
@@ -344,6 +344,7 @@ class JavaTestRendererTest {
                         "create",
                         "create should execute successfully",
                         "User",
+                        List.of(),
                         List.of(),
                         List.of(
                                 new TestData(

@@ -2,12 +2,15 @@ package com.example.testgenerator.planning;
 
 import com.example.testgenerator.analysis.model.AssignmentModel;
 import com.example.testgenerator.analysis.model.CallKind;
+import com.example.testgenerator.analysis.model.CatchModel;
 import com.example.testgenerator.analysis.model.ClassModel;
 import com.example.testgenerator.analysis.model.ConditionModel;
 import com.example.testgenerator.analysis.model.MethodCallModel;
 import com.example.testgenerator.analysis.model.MethodModel;
+import com.example.testgenerator.analysis.model.ParameterModel;
 import com.example.testgenerator.analysis.model.ReturnModel;
 import com.example.testgenerator.analysis.model.ThrowModel;
+import com.example.testgenerator.analysis.model.TryModel;
 import com.example.testgenerator.planning.model.ExpectedOutcome;
 import com.example.testgenerator.planning.model.MockAction;
 import com.example.testgenerator.planning.model.MockSetup;
@@ -18,103 +21,117 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class DefaultTestPlanner implements TestPlanner {
 
+    // -----------------------------------------------------------------
+    // Entry point
+    // -----------------------------------------------------------------
+
     @Override
     public List<TestScenario> plan(ClassModel classModel) {
 
-        List<TestScenario> scenarios =
-                new ArrayList<>();
+        List<TestScenario> scenarios = new ArrayList<>();
 
         for (MethodModel method : classModel.methods()) {
 
-            if (method.conditions().isEmpty()) {
-
-                scenarios.add(
-                        createBasicScenario(method)
-                );
-
-                continue;
-            }
-
-            for (ConditionModel condition :
-                    method.conditions()) {
-
-                scenarios.add(
-                        createExceptionScenario(
-                                method,
-                                condition
-                        )
-                );
-
-                scenarios.add(
-                        createSuccessScenario(
-                                method,
-                                condition
-                        )
-                );
-            }
+            scenarios.addAll(planMethod(method));
         }
 
         return scenarios;
     }
 
-    private TestScenario createBasicScenario(
-            MethodModel method) {
+    private List<TestScenario> planMethod(MethodModel method) {
 
-        return new TestScenario(
-                method.name(),
-                method.name()
-                        + " should execute successfully",
-                method.returnType(),
-                method.parameters(),
-                createTestData(method),
-                dependencyCalls(method),
-                createNormalExpectedOutcome(method)
-        );
-    }
+        List<TestScenario> scenarios = new ArrayList<>();
 
-    private TestScenario createExceptionScenario(
-            MethodModel method,
-            ConditionModel condition) {
+        // 1. Guard clauses: top-level ifs that throw and are NOT inside a try.
+        //    One scenario per thrown exception.
+        for (ConditionModel condition : method.conditions()) {
 
-        List<MockSetup> mockSetups =
-                new ArrayList<>();
+            if (!isGuardClause(condition)) {
+                continue;
+            }
 
-        /*
-         * Make the condition true.
-         */
-        for (MethodCallModel call :
-                condition.methodCalls()) {
-
-            mockSetups.add(
-                    new MockSetup(
-                            call.target(),
-                            call.methodName(),
-                            call.arguments(),
-                            MockAction.RETURN,
-                            "true"
-                    )
-            );
+            for (String exceptionType : condition.thrownExceptions()) {
+                scenarios.add(
+                        guardClauseScenario(method, condition, exceptionType)
+                );
+            }
         }
 
-        String exceptionType =
-                condition.thrownExceptions()
-                        .stream()
-                        .findFirst()
-                        .orElse("RuntimeException");
+        // 2. Try/catch scenarios: one per catch clause.
+        for (TryModel tryModel : method.tries()) {
+            for (CatchModel catchModel : tryModel.catches()) {
+                scenarios.add(
+                        catchScenario(method, tryModel, catchModel)
+                );
+            }
+        }
+
+        // 3. Happy path scenario. If there are no guard clauses and no
+        //    try/catch, this is just a basic scenario.
+        scenarios.add(happyPathScenario(method));
+
+        return scenarios;
+    }
+
+    // -----------------------------------------------------------------
+    // Guard clause scenarios
+    // -----------------------------------------------------------------
+
+    private boolean isGuardClause(ConditionModel condition) {
+
+        // A guard clause throws *and* is not wrapped in a try.
+        // We use the condition's own context to decide.
+        if (condition.thrownExceptions().isEmpty()) {
+            return false;
+        }
+
+        // If the condition has no context (older callers), assume top-level.
+        if (condition.context() == null) {
+            return true;
+        }
+
+        return condition.context().tryDepth() == 0
+               && !condition.context().insideCatch();
+    }
+
+    private TestScenario guardClauseScenario(
+            MethodModel method,
+            ConditionModel condition,
+            String exceptionType) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        // Stub every dependency call in the condition so the guard trips.
+        String stubValue = stubValueForCondition(condition.expression());
+
+        for (MethodCallModel call : condition.methodCalls()) {
+            if (call.kind() != CallKind.DEPENDENCY) {
+                continue;
+            }
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    stubValue
+            ));
+        }
 
         return new TestScenario(
                 method.name(),
-                method.name()
-                        + " should throw "
-                        + exceptionType,
+                method.name() + " should throw " + exceptionType,
                 method.returnType(),
+                method.declaredThrows(),
                 method.parameters(),
-                createTestData(method),
-                mockSetups,
+                createTestData(method, condition),
+                setups,
                 new ExpectedOutcome(
                         OutcomeKind.THROW_EXCEPTION,
                         exceptionType
@@ -122,145 +139,296 @@ public class DefaultTestPlanner implements TestPlanner {
         );
     }
 
-    private TestScenario createSuccessScenario(
+    /**
+     * Decide what stub value makes the given condition evaluate to true.
+     * Handles the common shapes; falls back to "true".
+     */
+    private String stubValueForCondition(String expression) {
+
+        String e = expression.trim();
+
+        // !x.foo(...) -> false
+        if (e.startsWith("!")) {
+            return "false";
+        }
+
+        // x == null -> null
+        if (e.endsWith("== null")) {
+            return "null";
+        }
+
+        // x != null -> some non-null. Renderer will need help here; use
+        // a Mockito-wide non-null. For now, a generic mock(Object.class)
+        // is only useful as a placeholder; if the arg type is unknown,
+        // the renderer should be responsible for choosing something better.
+        if (e.endsWith("!= null")) {
+            return "mock(Object.class)";
+        }
+
+        // x.isEmpty() -> false, x.isPresent() -> true ... leave to the
+        // renderer for now; default to true.
+        return "true";
+    }
+
+    // -----------------------------------------------------------------
+    // Try / catch scenarios
+    // -----------------------------------------------------------------
+
+    private TestScenario catchScenario(
             MethodModel method,
-            ConditionModel condition) {
+            TryModel tryModel,
+            CatchModel catchModel) {
 
-        List<MockSetup> mockSetups =
-                new ArrayList<>();
+        List<MockSetup> setups = new ArrayList<>();
 
-        for (MethodCallModel call :
-                method.methodCalls()) {
+        // 1. Neutralize every guard clause that sits above the try, so
+        //    execution can actually reach the try body.
+        setups.addAll(guardNeutralizingSetups(method));
 
-            /*
-             * The condition itself must evaluate to false.
-             */
-            if (belongsToCondition(
-                    call,
-                    condition)) {
+        // 2. Pick the first dependency call in the try body as the one that
+        //    throws the caught exception.
+        MethodCallModel throwingCall = firstDependencyCall(tryModel.bodyCalls());
 
-                mockSetups.add(
-                        new MockSetup(
-                                call.target(),
-                                call.methodName(),
-                                call.arguments(),
-                                MockAction.RETURN,
-                                "false"
-                        )
-                );
+        if (throwingCall != null) {
+            setups.add(new MockSetup(
+                    throwingCall.target(),
+                    throwingCall.targetType(),
+                    throwingCall.methodName(),
+                    normalizeArguments(throwingCall.arguments(), method),
+                    MockAction.THROW,
+                    catchModel.exceptionType()
+            ));
+        }
 
+        // 3. Verify the dependency calls in the catch body.
+        for (MethodCallModel call : catchModel.methodCalls()) {
+            if (call.kind() != CallKind.DEPENDENCY) {
+                continue;
+            }
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.VERIFY,
+                    ""
+            ));
+        }
+
+        ExpectedOutcome outcome;
+        if (!catchModel.throwsStatements().isEmpty()) {
+            ThrowModel t = catchModel.throwsStatements().get(0);
+            outcome = new ExpectedOutcome(
+                    OutcomeKind.THROW_EXCEPTION,
+                    t.exceptionType()
+            );
+        } else {
+            outcome = createNormalExpectedOutcome(method);
+        }
+
+        String displayName = method.name()
+                             + " should handle "
+                             + catchModel.exceptionType();
+
+        return new TestScenario(
+                method.name(),
+                displayName,
+                method.returnType(),
+                method.declaredThrows(),
+                method.parameters(),
+                createTestData(method, null),
+                setups,
+                outcome
+        );
+    }
+
+    /**
+     * For each top-level guard clause (an if that throws and is not inside a
+     * try), emit a stub that makes the guard NOT fire. This is what allows
+     * execution to reach the try block in catch scenarios.
+     */
+    private List<MockSetup> guardNeutralizingSetups(MethodModel method) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        for (ConditionModel condition : method.conditions()) {
+
+            if (!isGuardClause(condition)) {
                 continue;
             }
 
-            if (call.kind()
-                    == CallKind.DEPENDENCY) {
-
-                mockSetups.add(
-                        createMockSetup(
-                                call,
-                                method
-                        )
-                );
+            // Guard must be above the try — tryDepth 0 and not in a catch.
+            // Otherwise it belongs to a different scenario shape.
+            if (condition.context() != null) {
+                if (condition.context().tryDepth() > 0
+                    || condition.context().insideCatch()) {
+                    continue;
+                }
             }
+
+            String stub = negateConditionStub(
+                    stubValueForCondition(condition.expression()));
+
+            for (MethodCallModel call : condition.methodCalls()) {
+                if (call.kind() != CallKind.DEPENDENCY) {
+                    continue;
+                }
+                setups.add(new MockSetup(
+                        call.target(),
+                        call.targetType(),
+                        call.methodName(),
+                        normalizeArguments(call.arguments(), method),
+                        MockAction.RETURN,
+                        stub
+                ));
+            }
+        }
+
+        return setups;
+    }
+
+    private MethodCallModel firstDependencyCall(List<MethodCallModel> calls) {
+        for (MethodCallModel call : calls) {
+            if (call.kind() == CallKind.DEPENDENCY) {
+                return call;
+            }
+        }
+        return null;
+    }
+
+    // -----------------------------------------------------------------
+    // Happy path scenario
+    // -----------------------------------------------------------------
+
+    private TestScenario happyPathScenario(MethodModel method) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        Set<String> guardCallKeys = method.conditions().stream()
+                .filter(this::isGuardClause)
+                .flatMap(c -> c.methodCalls().stream())
+                .map(this::callKey)
+                .collect(Collectors.toSet());
+
+        for (MethodCallModel call : method.methodCalls()) {
+
+            // Skip catch-body calls; they're exercised by catch scenarios.
+            if (call.context() != null && call.context().insideCatch()) {
+                continue;
+            }
+
+            // Skip guard-clause predicate calls; they're exercised by
+            // guard scenarios. On the happy path, they evaluate to the
+            // opposite value, but since the test doesn't currently stub
+            // them, Mockito's default (false) is what trips them off.
+            // We still stub them explicitly to be deterministic.
+            if (guardCallKeys.contains(callKey(call))) {
+                setups.add(new MockSetup(
+                        call.target(),
+                        call.targetType(),
+                        call.methodName(),
+                        normalizeArguments(call.arguments(), method),
+                        MockAction.RETURN,
+                        negateConditionStub(
+                                stubValueForCondition(
+                                        conditionFor(method, call)
+                                )
+                        )
+                ));
+                continue;
+            }
+
+            if (call.kind() != CallKind.DEPENDENCY) {
+                continue;
+            }
+
+            setups.add(createMockSetup(call, method));
         }
 
         return new TestScenario(
                 method.name(),
-                method.name()
-                        + " should execute successfully",
+                method.name() + " should execute successfully",
                 method.returnType(),
+                method.declaredThrows(),
                 method.parameters(),
-                createTestData(method),
-                mockSetups,
+                createTestData(method, null),
+                setups,
                 createNormalExpectedOutcome(method)
         );
     }
 
-    private boolean belongsToCondition(
-            MethodCallModel call,
-            ConditionModel condition) {
+    private String conditionFor(
+            MethodModel method,
+            MethodCallModel call) {
 
-        return condition.methodCalls()
-                .stream()
-                .anyMatch(conditionCall ->
-                        conditionCall.target()
-                                .equals(call.target())
-                                && conditionCall.methodName()
-                                .equals(call.methodName())
-                                && conditionCall.arguments()
-                                .equals(call.arguments())
-                );
+        for (ConditionModel condition : method.conditions()) {
+            if (condition.methodCalls().stream()
+                    .anyMatch(c -> callKey(c).equals(callKey(call)))) {
+                return condition.expression();
+            }
+        }
+        return "";
     }
 
-    private List<MockSetup> dependencyCalls(
-            MethodModel method) {
+    private String negateConditionStub(String stubValue) {
 
-        return method.methodCalls()
-                .stream()
-                .filter(call ->
-                        call.kind()
-                                == CallKind.DEPENDENCY)
-                .map(call ->
-                        createMockSetup(
-                                call,
-                                method
-                        )
-                )
-                .toList();
+        if (stubValue == null) return "false";
+        return switch (stubValue) {
+            case "true" -> "false";
+            case "false" -> "true";
+            case "null" -> "mock(Object.class)";
+            default -> "false";
+        };
     }
+
+    private String callKey(MethodCallModel call) {
+        return call.target() + "."
+               + call.methodName()
+               + call.arguments();
+    }
+
+    // -----------------------------------------------------------------
+    // Mock setup construction
+    // -----------------------------------------------------------------
 
     private MockSetup createMockSetup(
             MethodCallModel call,
             MethodModel method) {
 
-        if (isOptionalOrElseThrow(
-                method,
-                call)) {
-
+        if (isOptionalOrElseThrow(method, call)) {
             return new MockSetup(
                     call.target(),
+                    call.targetType(),
                     call.methodName(),
-                    normalizeArguments(
-                            call.arguments(),
-                            method
-                    ),
+                    normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
                     "Optional.of("
-                    + optionalExpectedVariable(
-                            method,
-                            call
-                    )
+                    + optionalExpectedVariable(method, call)
                     + ")"
             );
         }
 
-        String value =
-                findReturnValue(
-                        call,
-                        method
-                );
+        String value = findReturnValue(call, method);
 
-        if (!value.equals("null")) {
-
+        if (!"null".equals(value)) {
             return new MockSetup(
                     call.target(),
+                    call.targetType(),
                     call.methodName(),
-                    normalizeArguments(
-                            call.arguments(),
-                            method
-                    ),
+                    normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
                     value
             );
         }
 
+        // No assignment captures the result, and the call is not a chain
+        // returning Optional -> treat it as a side-effecting call we
+        // verify rather than stub.
         return new MockSetup(
                 call.target(),
+                call.targetType(),
                 call.methodName(),
-                normalizeArguments(
-                        call.arguments(),
-                        method
-                ),
+                normalizeArguments(call.arguments(), method),
                 MockAction.VERIFY,
                 ""
         );
@@ -271,12 +439,7 @@ public class DefaultTestPlanner implements TestPlanner {
             MethodModel method) {
 
         return arguments.stream()
-                .map(argument ->
-                        normalizeMockArgument(
-                                argument,
-                                method
-                        )
-                )
+                .map(a -> normalizeMockArgument(a, method))
                 .toList();
     }
 
@@ -284,19 +447,10 @@ public class DefaultTestPlanner implements TestPlanner {
             String argument,
             MethodModel method) {
 
-        return method.assignments()
-                .stream()
-                .filter(assignment ->
-                        assignment.variableName()
-                                .equals(argument))
-                .filter(assignment ->
-                        assignment.expression()
-                                .startsWith("new "))
-                .map(assignment ->
-                        "any("
-                                + assignment.variableType()
-                                + ".class)"
-                )
+        return method.assignments().stream()
+                .filter(a -> a.variableName().equals(argument))
+                .filter(a -> a.expression().startsWith("new "))
+                .map(a -> "any(" + a.variableType() + ".class)")
                 .findFirst()
                 .orElse(argument);
     }
@@ -305,218 +459,173 @@ public class DefaultTestPlanner implements TestPlanner {
             MethodCallModel call,
             MethodModel method) {
 
-        return method.assignments()
-                .stream()
-                .filter(assignment ->
-                        assignment.expression()
-                                .contains(
-                                        call.target()
-                                                + "."
-                                                + call.methodName()
-                                ))
+        return method.assignments().stream()
+                .filter(a -> a.expression().contains(
+                        call.target() + "." + call.methodName()))
                 .map(AssignmentModel::variableName)
                 .findFirst()
                 .orElse("null");
     }
 
-    private ExpectedOutcome createNormalExpectedOutcome(
-            MethodModel method) {
+    // -----------------------------------------------------------------
+    // Expected outcome
+    // -----------------------------------------------------------------
 
-        for (MethodCallModel call :
-                method.methodCalls()) {
+    private ExpectedOutcome createNormalExpectedOutcome(MethodModel method) {
 
-            if (isOptionalOrElseThrow(
-                    method,
-                    call)) {
-
+        for (MethodCallModel call : method.methodCalls()) {
+            if (isOptionalOrElseThrow(method, call)) {
                 return new ExpectedOutcome(
                         OutcomeKind.RETURN_VALUE,
-                        optionalExpectedVariable(
-                                method,
-                                call
-                        )
+                        optionalExpectedVariable(method, call)
                 );
             }
         }
 
         if (!method.returns().isEmpty()) {
-
-            ReturnModel returnModel =
-                    method.returns()
-                            .getLast();
-
+            ReturnModel returnModel = method.returns().getLast();
             return new ExpectedOutcome(
                     OutcomeKind.RETURN_VALUE,
                     returnModel.expression()
             );
         }
 
-        return new ExpectedOutcome(
-                OutcomeKind.VOID,
-                ""
-        );
+        return new ExpectedOutcome(OutcomeKind.VOID, "");
     }
 
+    // -----------------------------------------------------------------
+    // Test data
+    // -----------------------------------------------------------------
+
     private List<TestData> createTestData(
-            MethodModel method) {
+            MethodModel method,
+            ConditionModel condition) {
 
-        List<TestData> testData =
-                new ArrayList<>();
+        List<TestData> testData = new ArrayList<>();
 
-        testData.addAll(
-                method.parameters()
-                        .stream()
-                        .map(parameter ->
-                                new TestData(
-                                        parameter.name(),
-                                        parameter.type(),
-                                        defaultValueFor(
-                                                parameter.type()
-                                        )
-                                )
-                        )
-                        .toList()
-        );
+        // Which parameter does this condition check for null (if any)?
+        String nullCheckedParam =
+                nullCheckedParameter(condition, method);
 
-        for (MethodCallModel call :
-                method.methodCalls()) {
+        for (ParameterModel parameter : method.parameters()) {
+            String initialization;
 
-            if (!isOptionalOrElseThrow(
-                    method,
-                    call)) {
-
-                continue;
+            if (parameter.name().equals(nullCheckedParam)) {
+                initialization = "null";
+            } else {
+                initialization = defaultValueFor(parameter.type(), condition);
             }
 
-            String variableName =
-                    optionalExpectedVariable(
-                            method,
-                            call
-                    );
-
-            testData.add(
-                    new TestData(
-                            variableName,
-                            method.returnType(),
-                            "mock("
-                            + method.returnType()
-                            + ".class)"
-                    )
-            );
+            testData.add(new TestData(
+                    parameter.name(),
+                    parameter.type(),
+                    initialization
+            ));
         }
 
-        for (AssignmentModel assignment :
-                requiredAssignments(method)) {
+        for (MethodCallModel call : method.methodCalls()) {
+            if (isOptionalOrElseThrow(method, call)) {
+                String variableName =
+                        optionalExpectedVariable(method, call);
+                testData.add(new TestData(
+                        variableName,
+                        method.returnType(),
+                        "mock(" + method.returnType() + ".class)"
+                ));
+            }
+        }
 
-            if (assignment.expression()
-                    .isBlank()) {
-
+        for (AssignmentModel assignment : requiredAssignments(method)) {
+            if (assignment.expression().isBlank()) {
                 continue;
             }
-
-            String initialization =
-                    createInitialization(
-                            assignment
-                    );
-
-            testData.add(
-                    new TestData(
-                            assignment.variableName(),
-                            assignment.variableType(),
-                            initialization
-                    )
-            );
+            testData.add(new TestData(
+                    assignment.variableName(),
+                    assignment.variableType(),
+                    createInitialization(assignment)
+            ));
         }
 
         return testData;
     }
 
-    private List<AssignmentModel> requiredAssignments(
+    private String nullCheckedParameter(
+            ConditionModel condition,
             MethodModel method) {
 
-        List<String> requiredVariables =
-                new ArrayList<>();
+        if (condition == null) {
+            return null;
+        }
 
-        method.returns()
-                .stream()
+        for (ParameterModel parameter : method.parameters()) {
+            // Look for "<param> == null" in the condition text.
+            String trimmed = condition.expression().trim();
+            if (trimmed.equals(parameter.name() + " == null")) {
+                return parameter.name();
+            }
+        }
+        return null;
+    }
+
+    private List<AssignmentModel> requiredAssignments(MethodModel method) {
+
+        List<String> requiredVariables = new ArrayList<>();
+
+        method.returns().stream()
                 .map(ReturnModel::expression)
                 .forEach(requiredVariables::add);
 
-        method.methodCalls()
-                .stream()
-                .flatMap(call ->
-                        call.arguments().stream())
+        method.methodCalls().stream()
+                .flatMap(call -> call.arguments().stream())
                 .forEach(requiredVariables::add);
 
-        return method.assignments()
-                .stream()
-                .filter(assignment ->
-                        requiredVariables.contains(
-                                assignment.variableName()
-                        )
-                        || assignment.expression()
-                                .startsWith("new "))
+        return method.assignments().stream()
+                .filter(a -> requiredVariables.contains(a.variableName())
+                             || a.expression().startsWith("new "))
                 .toList();
     }
 
-    private String createInitialization(
-            AssignmentModel assignment) {
+    private String createInitialization(AssignmentModel assignment) {
 
-        String expression =
-                assignment.expression();
+        String expression = assignment.expression();
 
         if (expression.startsWith("new ")) {
             return expression;
         }
 
         if (expression.contains(".")) {
-            return "mock("
-                    + assignment.variableType()
-                    + ".class)";
+            return "mock(" + assignment.variableType() + ".class)";
         }
 
         return expression;
     }
 
     private String defaultValueFor(
-            String type) {
+            String type,
+            ConditionModel condition) {
 
+        // If the condition checks this parameter against null, give it
+        // a non-null default so the happy path is reachable.
+        // (Reverse for guard scenarios is handled elsewhere.)
         return switch (type) {
 
-            case "String" ->
-                    "\"test@example.com\"";
-
-            case "Long" ->
-                    "1L";
-
-            case "Integer", "int" ->
-                    "1";
-
-            case "long" ->
-                    "1L";
-
-            case "Double", "double" ->
-                    "1.0";
-
-            case "Float", "float" ->
-                    "1.0f";
-
-            case "Boolean", "boolean" ->
-                    "true";
-
-            case "Short", "short" ->
-                    "(short) 1";
-
-            case "Byte", "byte" ->
-                    "(byte) 1";
-
-            case "Character", "char" ->
-                    "'a'";
-
-            default ->
-                    "null";
+            case "String" -> "\"test@example.com\"";
+            case "Long" -> "1L";
+            case "Integer", "int" -> "1";
+            case "long" -> "1L";
+            case "Double", "double" -> "1.0";
+            case "Float", "float" -> "1.0f";
+            case "Boolean", "boolean" -> "true";
+            case "Short", "short" -> "(short) 1";
+            case "Byte", "byte" -> "(byte) 1";
+            case "Character", "char" -> "'a'";
+            default -> "mock(" + type + ".class)";
         };
     }
+
+    // -----------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------
 
     private boolean isOptionalOrElseThrow(
             MethodModel method,
@@ -526,29 +635,23 @@ public class DefaultTestPlanner implements TestPlanner {
             return false;
         }
 
-        return method.returns()
-                .stream()
+        return method.returns().stream()
                 .map(ReturnModel::expression)
-                .anyMatch(expression ->
-                        expression.contains(
-                                call.target()
-                                + "."
-                                + call.methodName()
-                        )
-                        && expression.endsWith(
-                                ".orElseThrow()"
-                        )
-                );
+                .anyMatch(e -> e.contains(
+                        call.target() + "." + call.methodName())
+                               && e.endsWith(".orElseThrow()"));
     }
 
     private String optionalExpectedVariable(
             MethodModel method,
             MethodCallModel call) {
 
+        String returnType = method.returnType();
+        if (returnType == null || returnType.isBlank()) {
+            return "expectedValue";
+        }
         return "expected"
-               + Character.toUpperCase(
-                method.returnType().charAt(0)
-        )
-               + method.returnType().substring(1);
+               + Character.toUpperCase(returnType.charAt(0))
+               + returnType.substring(1);
     }
 }

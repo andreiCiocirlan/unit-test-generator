@@ -14,10 +14,14 @@ import java.util.List;
 public class JavaParserConditionAnalyzer implements ConditionAnalyzer {
 
     private final MethodCallAnalyzer methodCallAnalyzer;
+    private final StatementContextResolver contextResolver;
 
     public JavaParserConditionAnalyzer(
-            MethodCallAnalyzer methodCallAnalyzer) {
+            MethodCallAnalyzer methodCallAnalyzer,
+            StatementContextResolver contextResolver) {
+
         this.methodCallAnalyzer = methodCallAnalyzer;
+        this.contextResolver = contextResolver;
     }
 
     @Override
@@ -43,7 +47,8 @@ public class JavaParserConditionAnalyzer implements ConditionAnalyzer {
         return new ConditionModel(
                 expression,
                 methodCalls,
-                thrownExceptions
+                thrownExceptions,
+                contextResolver.resolve(ifStmt)
         );
     }
 
