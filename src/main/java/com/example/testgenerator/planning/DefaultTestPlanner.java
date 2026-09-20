@@ -337,45 +337,20 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private TestScenario happyPathScenario(MethodModel method) {
 
-        List<MockSetup> setups = new ArrayList<>();
+        // Neutralize guards first.
+        List<MockSetup> setups = new ArrayList<>(guardNeutralizingSetupsForHappyPath(method));
 
-        Set<String> guardCallKeys = method.conditions().stream()
+        // Then handle other dependency calls that aren't guard predicates.
+        Set<String> guardKeys = method.conditions().stream()
                 .filter(this::isGuardClause)
                 .flatMap(c -> c.methodCalls().stream())
                 .map(this::callKey)
                 .collect(Collectors.toSet());
 
         for (MethodCallModel call : method.methodCalls()) {
-
-            // Skip catch-body calls; they're exercised by catch scenarios.
-            if (call.context() != null && call.context().insideCatch()) {
-                continue;
-            }
-
-            // Skip guard-clause predicate calls; they're exercised by
-            // guard scenarios. On the happy path, they evaluate to the
-            // opposite value, but since the test doesn't currently stub
-            // them, Mockito's default (false) is what trips them off.
-            // We still stub them explicitly to be deterministic.
-            if (guardCallKeys.contains(callKey(call)) && call.kind() == CallKind.DEPENDENCY) {
-                setups.add(new MockSetup(
-                        call.target(),
-                        call.targetType(),
-                        call.methodName(),
-                        normalizeArguments(call.arguments(), method),
-                        MockAction.RETURN,
-                        negateConditionStub(
-                                stubValueForCondition(
-                                        conditionFor(method, call)
-                                )
-                        )
-                ));
-                continue;
-            }
-
-            if (call.kind() != CallKind.DEPENDENCY) {
-                continue;
-            }
+            if (call.context() != null && call.context().insideCatch()) continue;
+            if (call.kind() != CallKind.DEPENDENCY) continue;
+            if (guardKeys.contains(callKey(call))) continue;  // already handled
 
             setups.add(createMockSetup(call, method));
         }
@@ -390,6 +365,50 @@ public class DefaultTestPlanner implements TestPlanner {
                 setups,
                 createNormalExpectedOutcome(method)
         );
+    }
+
+    private List<MockSetup> guardNeutralizingSetupsForHappyPath(MethodModel method) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        for (ConditionModel condition : method.conditions()) {
+
+            if (!isGuardClause(condition)) continue;
+            if (condition.context() != null
+                && (condition.context().tryDepth() > 0
+                    || condition.context().insideCatch())) continue;
+
+            // Find the first dependency call in the condition and make
+            // its branch short-circuit the whole condition.
+            for (MethodCallModel call : condition.methodCalls()) {
+                if (call.kind() != CallKind.DEPENDENCY) continue;
+
+                String stub = isNegated(condition.expression(), call)
+                        ? "true"    // !call -> stub true so !true = false
+                        : "false";  // call -> stub false so false
+
+                setups.add(new MockSetup(
+                        call.target(),
+                        call.targetType(),
+                        call.methodName(),
+                        normalizeArguments(call.arguments(), method),
+                        MockAction.RETURN,
+                        stub
+                ));
+                break;  // only the first dependency call
+            }
+        }
+
+        return setups;
+    }
+
+    private boolean isNegated(String expression, MethodCallModel call) {
+        String needle = call.target() + "." + call.methodName();
+        int idx = expression.indexOf(needle);
+        if (idx <= 0) return false;
+        // Look back a few chars for a `!`
+        int lookbackStart = Math.max(0, idx - 3);
+        return expression.substring(lookbackStart, idx).contains("!");
     }
 
     private String conditionFor(
@@ -626,11 +645,22 @@ public class DefaultTestPlanner implements TestPlanner {
                 .forEach(referenced::add);
 
         return method.assignments().stream()
-                .filter(a -> referenced.stream().anyMatch(expr ->
-                        Pattern.compile("\\b" + Pattern.quote(a.variableName()) + "\\b")
-                                .matcher(expr).find()))
                 .filter(a -> !a.expression().isBlank())
+                .filter(a ->
+                        isPrimitiveType(a.variableType())
+                        || isWellKnownImmutable(a.variableType())
+                        || referenced.stream().anyMatch(expr ->
+                                Pattern.compile("\\b" + Pattern.quote(a.variableName()) + "\\b")
+                                        .matcher(expr).find()))
                 .toList();
+    }
+
+    private boolean isPrimitiveType(String type) {
+        return switch (type) {
+            case "int", "long", "short", "byte",
+                 "double", "float", "boolean", "char" -> true;
+            default -> false;
+        };
     }
 
     private String createInitialization(AssignmentModel assignment) {
