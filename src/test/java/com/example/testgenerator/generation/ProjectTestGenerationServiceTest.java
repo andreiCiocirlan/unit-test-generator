@@ -88,8 +88,8 @@ class ProjectTestGenerationServiceTest {
                         executor
                 );
 
-        ExecutionResult result =
-                service.generateAndTest(
+        CompilationResult result =
+                service.generateAndCompile(
                         projectRoot,
                         sourceFile
                 );
