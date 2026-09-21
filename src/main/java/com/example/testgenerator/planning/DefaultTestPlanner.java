@@ -352,7 +352,7 @@ public class DefaultTestPlanner implements TestPlanner {
             if (call.kind() != CallKind.DEPENDENCY) continue;
             if (guardKeys.contains(callKey(call))) continue;  // already handled
 
-            setups.add(createMockSetup(call, method));
+            setups.addAll(createMockSetups(call, method));
         }
 
         return new TestScenario(
@@ -445,40 +445,14 @@ public class DefaultTestPlanner implements TestPlanner {
     // Mock setup construction
     // -----------------------------------------------------------------
 
-    private MockSetup createMockSetup(
+    private List<MockSetup> createMockSetups(
             MethodCallModel call,
             MethodModel method) {
 
-        if (isOptionalOrElseThrow(method, call)) {
-            return new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    "Optional.of("
-                    + optionalExpectedVariable(method, call)
-                    + ")"
-            );
-        }
+        List<MockSetup> setups = new ArrayList<>();
 
-        String value = findReturnValue(call, method);
-
-        if (!"null".equals(value)) {
-            return new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    value
-            );
-        }
-
-        // No assignment captures the result, and the call is not a chain
-        // returning Optional -> treat it as a side-effecting call we
-        // verify rather than stub.
-        return new MockSetup(
+        // Always verify dependency calls in the happy path.
+        MockSetup verifySetup = new MockSetup(
                 call.target(),
                 call.targetType(),
                 call.methodName(),
@@ -486,6 +460,53 @@ public class DefaultTestPlanner implements TestPlanner {
                 MockAction.VERIFY,
                 ""
         );
+
+        if (isOptionalOrElseThrow(method, call)) {
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    "java.util.Optional.of("
+                    + optionalExpectedVariable(method, call)
+                    + ")"
+            ));
+            setups.add(verifySetup);
+            return setups;
+        }
+
+        String value = findReturnValue(call, method);
+
+        if (!"null".equals(value)) {
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    value
+            ));
+            setups.add(verifySetup);
+            return setups;
+        }
+
+        if (callResultIsUsed(call, method)) {
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    defaultValueFor(method.returnType())
+            ));
+            setups.add(verifySetup);
+            return setups;
+        }
+
+        // Pure side-effect call: verify only.
+        setups.add(verifySetup);
+        return setups;
     }
 
     private List<String> normalizeArguments(
@@ -509,6 +530,23 @@ public class DefaultTestPlanner implements TestPlanner {
                 .orElse(argument);
     }
 
+    private boolean callResultIsUsed(
+            MethodCallModel call,
+            MethodModel method) {
+
+        String needle = call.target() + "." + call.methodName() + "(";
+
+        // Assigned to a variable?
+        boolean assigned = method.assignments().stream()
+                .anyMatch(a -> a.expression().contains(needle));
+
+        // Returned directly?
+        boolean returned = method.returns().stream()
+                .anyMatch(r -> r.expression().contains(needle));
+
+        return assigned || returned;
+    }
+
     private String findReturnValue(
             MethodCallModel call,
             MethodModel method) {
@@ -527,10 +565,11 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private ExpectedOutcome createNormalExpectedOutcome(MethodModel method) {
 
+        if ("void".equals(method.returnType())) {
+            return new ExpectedOutcome(OutcomeKind.VOID, "");
+        }
+
         for (MethodCallModel call : method.methodCalls()) {
-            if ("void".equals(method.returnType())) {
-                return new ExpectedOutcome(OutcomeKind.VOID, "");
-            }
             if (isOptionalOrElseThrow(method, call)) {
                 return new ExpectedOutcome(
                         OutcomeKind.RETURN_VALUE,
@@ -540,7 +579,25 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         if (!method.returns().isEmpty()) {
+
             ReturnModel returnModel = method.returns().getLast();
+
+            // If the return expression is a dependency call, the mock was
+            // stubbed with a type-appropriate default; assert against that
+            // literal rather than re-invoking the mock.
+            for (MethodCallModel call : method.methodCalls()) {
+                if (call.kind() != CallKind.DEPENDENCY) continue;
+
+                String needle = call.target() + "." + call.methodName() + "(";
+                if (returnModel.expression().contains(needle)) {
+                    return new ExpectedOutcome(
+                            OutcomeKind.RETURN_VALUE,
+                            defaultValueFor(method.returnType())
+                    );
+                }
+            }
+
+            // Non-dependency return (e.g. a field, a computed value).
             return new ExpectedOutcome(
                     OutcomeKind.RETURN_VALUE,
                     returnModel.expression()
@@ -587,7 +644,7 @@ public class DefaultTestPlanner implements TestPlanner {
                 testData.add(new TestData(
                         variableName,
                         method.returnType(),
-                        "mock(" + method.returnType() + ".class)"
+                        "java.util.Optional.empty()"
                 ));
             }
         }
@@ -740,7 +797,7 @@ public class DefaultTestPlanner implements TestPlanner {
         String type = assignment.variableType();
 
         if (isWellKnownImmutable(type)) {
-            return defaultValueFor(type, null);
+            return defaultValueFor(type);
         }
 
         // Real empty collections are almost always what you want as a
@@ -781,26 +838,22 @@ public class DefaultTestPlanner implements TestPlanner {
         };
     }
 
-    private String defaultValueFor(
-            String type,
-            ConditionModel condition) {
+    private String defaultValueFor(String type) {
+        if (type != null && type.startsWith("Optional<")) {
+            return "java.util.Optional.empty()";
+        }
 
-        // If the condition checks this parameter against null, give it
-        // a non-null default so the happy path is reachable.
-        // (Reverse for guard scenarios is handled elsewhere.)
         return switch (type) {
-
             case "String" -> "\"test@example.com\"";
-            case "Long" -> "1L";
+            case "Long", "long" -> "1L";
             case "Integer", "int" -> "1";
-            case "long" -> "1L";
             case "Double", "double" -> "1.0";
             case "Float", "float" -> "1.0f";
             case "Boolean", "boolean" -> "true";
             case "Short", "short" -> "(short) 1";
             case "Byte", "byte" -> "(byte) 1";
             case "Character", "char" -> "'a'";
-            default -> "mock(" + type + ".class)";
+            default -> "null";
         };
     }
 
@@ -811,7 +864,7 @@ public class DefaultTestPlanner implements TestPlanner {
         String type = parameter.type();
 
         if (isWellKnownImmutable(type)) {
-            return defaultValueFor(type, null);
+            return defaultValueFor(type);
         }
 
         return dtoInitializer(type);
@@ -857,8 +910,10 @@ public class DefaultTestPlanner implements TestPlanner {
         if (returnType == null || returnType.isBlank()) {
             return "expectedValue";
         }
+
+        String simple = simpleName(eraseGenerics(returnType));  // e.g. "Optional"
         return "expected"
-               + Character.toUpperCase(returnType.charAt(0))
-               + returnType.substring(1);
+               + Character.toUpperCase(simple.charAt(0))
+               + simple.substring(1);
     }
 }
