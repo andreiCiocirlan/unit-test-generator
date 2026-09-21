@@ -568,7 +568,7 @@ public class DefaultTestPlanner implements TestPlanner {
             String initialization;
 
             if (parameter.name().equals(nullCheckedParam)) {
-                initialization = "null";
+                initialization = guardTriggeringValue(parameter, condition);
             } else {
                 initialization = parameterInitializer(parameter);
             }
@@ -606,6 +606,38 @@ public class DefaultTestPlanner implements TestPlanner {
         return testData;
     }
 
+    private String guardTriggeringValue(
+            ParameterModel parameter,
+            ConditionModel condition) {
+
+        String expr = condition.expression();
+        String name = parameter.name();
+
+        // If the guard specifically checks blank/empty, null triggers it too
+        // (assuming the guard is `x == null || x.isBlank()`), so null is
+        // always safe. But if we want a more targeted value, we can choose
+        // "" for isBlank/isEmpty checks. Either works for `||` guards.
+        boolean checksBlankish =
+                Pattern.compile("\\b" + Pattern.quote(name)
+                                + "\\s*\\.\\s*(isBlank|isEmpty)\\s*\\(")
+                        .matcher(expr).find()
+                || Pattern.compile("\\b(isBlank|isEmpty)\\s*\\(\\s*"
+                                   + Pattern.quote(name) + "\\s*\\)")
+                        .matcher(expr).find();
+
+        if (checksBlankish) {
+            // "" makes both isBlank and isEmpty true, and it also makes
+            // `x == null` false — so only choose it when the guard uses `||`
+            // with a null check, or when there is no null check at all.
+            if (expr.contains(name + " == null")) {
+                return "null";      // null satisfies both branches of `||`
+            }
+            return "\"\"";
+        }
+
+        return "null";
+    }
+
     private String nullCheckedParameter(
             ConditionModel condition,
             MethodModel method) {
@@ -614,14 +646,54 @@ public class DefaultTestPlanner implements TestPlanner {
             return null;
         }
 
+        String expr = condition.expression();
+
         for (ParameterModel parameter : method.parameters()) {
-            // Look for "<param> == null" in the condition text.
-            String trimmed = condition.expression().trim();
-            if (trimmed.equals(parameter.name() + " == null")) {
+            if (parameterIsConstrained(expr, parameter.name())) {
                 return parameter.name();
             }
         }
         return null;
+    }
+
+    /**
+     * Does the guard expression constrain this parameter in a way that
+     * a null / blank / empty value would trigger?
+     */
+    private boolean parameterIsConstrained(String expression, String name) {
+
+        // status == null
+        // status != null (negated form is also "constrained")
+        // status.isBlank()
+        // status.isEmpty()
+        // !status.isEmpty()
+        // NotificationUtils.isBlank(status)
+        // Objects.isNull(status) / Objects.nonNull(status)
+
+        // Direct comparisons.
+        if (Pattern.compile("\\b" + Pattern.quote(name) + "\\s*==\\s*null\\b")
+                .matcher(expression).find()) {
+            return true;
+        }
+        if (Pattern.compile("\\b" + Pattern.quote(name) + "\\s*!=\\s*null\\b")
+                .matcher(expression).find()) {
+            return true;
+        }
+
+        // status.isBlank() / status.isEmpty() / status.isPresent() etc.
+        if (Pattern.compile("\\b" + Pattern.quote(name) + "\\s*\\.\\s*(isBlank|isEmpty)\\s*\\(")
+                .matcher(expression).find()) {
+            return true;
+        }
+
+        // Wrapper forms: X.isBlank(status) / X.isEmpty(status) / Objects.isNull(status)
+        if (Pattern.compile("\\b(isBlank|isEmpty|isNull|nonNull)\\s*\\(\\s*"
+                            + Pattern.quote(name) + "\\s*\\)")
+                .matcher(expression).find()) {
+            return true;
+        }
+
+        return false;
     }
 
     private List<AssignmentModel> requiredAssignments(MethodModel method) {
@@ -746,7 +818,7 @@ public class DefaultTestPlanner implements TestPlanner {
     }
 
     private String dtoInitializer(String type) {
-        return "initialize" + capitalize(simpleName(type)) + "(); // TODO";
+        return type + ".builder().build(); // TODO";
     }
 
     private String simpleName(String type) {
