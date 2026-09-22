@@ -216,14 +216,22 @@ public class DefaultTestPlanner implements TestPlanner {
 
         List<MockSetup> setups = new ArrayList<>();
 
-        // 1. Neutralize every guard clause that sits above the try, so
-        //    execution can actually reach the try body.
-        setups.addAll(guardNeutralizingSetups(method));
-
-        // 2. Pick the first dependency call in the try body as the one that
-        //    throws the caught exception.
+        // 0. Identify the call that will be made to throw before we do
+        //    anything else, so the pre-try stubbing can skip it.
         MethodCallModel throwingCall = firstDependencyCall(tryModel.bodyCalls());
 
+        // 1. Stub pre-try dependency calls whose results are used later
+        //    (e.g. mapper.toEntity(request) -> entity, repository.save(entity) -> saved).
+        //    Without these, the service's local variables are null and the
+        //    catch body NPEs before reaching the verify.
+        setups.addAll(preTryUsedSetups(method, throwingCall));
+
+        // 2. Neutralize every guard clause above the try so execution can
+        //    reach the try body.
+        setups.addAll(guardNeutralizingSetups(method));
+
+        // 3. Make the first dependency call inside the try throw the caught
+        //    exception type.
         if (throwingCall != null) {
             setups.add(new MockSetup(
                     throwingCall.target(),
@@ -235,7 +243,7 @@ public class DefaultTestPlanner implements TestPlanner {
             ));
         }
 
-        // 3. Verify the dependency calls in the catch body.
+        // 4. Verify the dependency calls in the catch body.
         for (MethodCallModel call : catchModel.methodCalls()) {
             if (call.kind() != CallKind.DEPENDENCY) {
                 continue;
@@ -278,6 +286,55 @@ public class DefaultTestPlanner implements TestPlanner {
     }
 
     /**
+     * For every dependency call outside the try (tryDepth == 0, not inside
+     * a catch) whose result is assigned to a variable and used later, emit
+     * a RETURN stub. This binds the service's local variables to objects the
+     * test can refer to, so the catch body has valid data to work with.
+     */
+    private List<MockSetup> preTryUsedSetups(
+            MethodModel method,
+            MethodCallModel throwingCall) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        for (MethodCallModel call : method.methodCalls()) {
+
+            if (call.kind() != CallKind.DEPENDENCY) continue;
+
+            // Only consider calls outside the try and outside any catch.
+            if (call.context() != null) {
+                if (call.context().tryDepth() > 0) continue;
+                if (call.context().insideCatch()) continue;
+            }
+
+            // Skip the call that will be made to throw.
+            if (throwingCall != null
+                && call.target().equals(throwingCall.target())
+                && call.methodName().equals(throwingCall.methodName())) {
+                continue;
+            }
+
+            // Skip calls whose result is not captured.
+            if (!callResultIsUsed(call, method)) continue;
+
+            // findReturnValue gives the variable name the result is bound to.
+            String value = findReturnValue(call, method);
+            if ("null".equals(value)) continue;
+
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    value
+            ));
+        }
+
+        return setups;
+    }
+
+    /**
      * For each top-level guard clause (an if that throws and is not inside a
      * try), emit a stub that makes the guard NOT fire. This is what allows
      * execution to reach the try block in catch scenarios.
@@ -292,8 +349,6 @@ public class DefaultTestPlanner implements TestPlanner {
                 continue;
             }
 
-            // Guard must be above the try — tryDepth 0 and not in a catch.
-            // Otherwise it belongs to a different scenario shape.
             if (condition.context() != null) {
                 if (condition.context().tryDepth() > 0
                     || condition.context().insideCatch()) {
@@ -301,22 +356,24 @@ public class DefaultTestPlanner implements TestPlanner {
                 }
             }
 
+            // Only the first dependency call in the condition needs to be
+            // neutralized — short-circuit evaluation means the rest won't run.
+            MethodCallModel firstDependency = firstDependencyCall(condition.methodCalls());
+            if (firstDependency == null) {
+                continue;
+            }
+
             String stub = negateConditionStub(
                     stubValueForCondition(condition.expression()));
 
-            for (MethodCallModel call : condition.methodCalls()) {
-                if (call.kind() != CallKind.DEPENDENCY) {
-                    continue;
-                }
-                setups.add(new MockSetup(
-                        call.target(),
-                        call.targetType(),
-                        call.methodName(),
-                        normalizeArguments(call.arguments(), method),
-                        MockAction.RETURN,
-                        stub
-                ));
-            }
+            setups.add(new MockSetup(
+                    firstDependency.target(),
+                    firstDependency.targetType(),
+                    firstDependency.methodName(),
+                    normalizeArguments(firstDependency.arguments(), method),
+                    MockAction.RETURN,
+                    stub
+            ));
         }
 
         return setups;
