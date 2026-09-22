@@ -760,10 +760,16 @@ public class DefaultTestPlanner implements TestPlanner {
             if (isOptionalOrElseThrow(method, call)) {
                 String variableName =
                         optionalExpectedVariable(method, call);
+
+                // The variable holds the UNWRAPPED value of the Optional,
+                // so its type and initializer must be the inner type's, not
+                // Optional's.
+                String innerType = optionalInnerType(method.returnType());
+
                 testData.add(new TestData(
                         variableName,
-                        method.returnType(),
-                        "java.util.Optional.empty()"
+                        innerType,
+                        valueResolver.valueFor(innerType)
                 ));
             }
         }
@@ -780,6 +786,22 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return testData;
+    }
+
+    /**
+     * If the given type is Optional<T>, return T. Otherwise, return the
+     * type unchanged. Used to describe the unwrapped value that orElseThrow
+     * would produce.
+     */
+    private String optionalInnerType(String type) {
+        if (type == null) return type;
+        if (!type.startsWith("Optional<")) return type;
+
+        int lt = type.indexOf('<');
+        int gt = type.lastIndexOf('>');
+        if (lt < 0 || gt < 0 || gt <= lt) return type;
+
+        return type.substring(lt + 1, gt).trim();
     }
 
     private String guardTriggeringValue(
