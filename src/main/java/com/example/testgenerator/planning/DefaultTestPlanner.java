@@ -142,9 +142,8 @@ public class DefaultTestPlanner implements TestPlanner {
 
         List<MockSetup> setups = new ArrayList<>();
 
-        // Stub every dependency call in the condition so the guard trips.
-        String stubValue = stubValueForCondition(condition.expression());
-
+        // Stub every dependency call in the condition with a per-call value
+        // that makes that call's branch of the condition evaluate to true.
         for (MethodCallModel call : condition.methodCalls()) {
             if (call.kind() != CallKind.DEPENDENCY) {
                 continue;
@@ -155,7 +154,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.methodName(),
                     normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
-                    stubValue
+                    guardStubValueFor(call, condition.expression())
             ));
         }
 
@@ -172,6 +171,54 @@ public class DefaultTestPlanner implements TestPlanner {
                         exceptionType
                 )
         );
+    }
+
+    /**
+     * Decide the stub value for a single dependency call so that this call's
+     * contribution to the guard condition evaluates to the branch value that
+     * makes the guard fire.
+     *
+     * The guard fires when the condition is TRUE. For a call:
+     *   - if it is negated (!call), stub it to false
+     *   - if it is not negated (call), stub it to true
+     *
+     * This is a local rule that assumes the call appears as a top-level
+     * conjunct/disjunct of the condition, which covers the shapes we generate
+     * today (simple `x`, `!x`, `a && x`, `a || x`).
+     */
+    private String guardStubValueFor(
+            MethodCallModel call,
+            String expression) {
+
+        boolean negated = isCallNegated(expression, call);
+
+        // Negated call -> stub false so !false == true.
+        // Non-negated call -> stub true.
+        return negated ? "false" : "true";
+    }
+
+    /**
+     * Returns true if the given dependency call appears in the expression
+     * with a leading `!`, i.e. the call is negated.
+     */
+    private boolean isCallNegated(
+            String expression,
+            MethodCallModel call) {
+
+        String needle = call.target() + "." + call.methodName();
+        int idx = expression.indexOf(needle);
+
+        if (idx < 0) {
+            return false;
+        }
+
+        // Look back a few characters for a `!`, allowing for whitespace and
+        // an optional `(` after the `!`.
+        int lookbackStart = Math.max(0, idx - 4);
+        String prefix = expression.substring(lookbackStart, idx);
+
+        // Match `!` optionally followed by whitespace or `(`.
+        return Pattern.compile("!\\s*\\(?\\s*$").matcher(prefix).find();
     }
 
     /**
