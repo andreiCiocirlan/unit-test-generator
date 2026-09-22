@@ -32,10 +32,12 @@ public class TestGenerationService {
         this.validator = validator;
     }
 
-    public GeneratedTest generate(Path sourceFile) {
+    public GeneratedTest generate(Path projectRoot, Path sourceFile) {
 
         ClassModel classModel =
                 analyzer.analyze(sourceFile);
+
+        planner.configure(projectRoot, classModel.imports());
 
         List<TestScenario> scenarios =
                 planner.plan(classModel);
@@ -68,7 +70,7 @@ public class TestGenerationService {
         );
     }
 
-    public String generateSource(Path sourceFile) {
-        return generate(sourceFile).source();
+    public String generateSource(Path projectRoot, Path sourceFile) {
+        return generate(projectRoot, sourceFile).source();
     }
 }

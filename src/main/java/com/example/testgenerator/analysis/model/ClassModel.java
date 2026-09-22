@@ -8,6 +8,7 @@ public record ClassModel(
         List<String> annotations,
         List<DependencyModel> dependencies,
         List<MethodModel> methods,
-        SpringType springType
+        SpringType springType,
+        List<String> imports
 ) {
 }

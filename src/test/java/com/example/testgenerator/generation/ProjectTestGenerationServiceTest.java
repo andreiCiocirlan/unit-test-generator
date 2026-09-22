@@ -1,11 +1,13 @@
 package com.example.testgenerator.generation;
 
+import com.example.testgenerator.analysis.DtoAnalyzer;
 import com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer;
 import com.example.testgenerator.analysis.StatementContextResolver;
 import com.example.testgenerator.execution.*;
 import com.example.testgenerator.generation.model.GeneratedTest;
 import com.example.testgenerator.generation.writer.JavaTestSourceWriter;
 import com.example.testgenerator.generation.writer.TestSourceWriter;
+import com.example.testgenerator.planning.DefaultValueResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -66,7 +68,7 @@ class ProjectTestGenerationServiceTest {
         var generationService =
                 new TestGenerationService(
                         analyzer,
-                        new com.example.testgenerator.planning.DefaultTestPlanner(),
+                        new com.example.testgenerator.planning.DefaultTestPlanner(new DefaultValueResolver(new DtoAnalyzer())),
                         new JavaTestRenderer(),
                         new com.example.testgenerator.execution.JavaParserGeneratedTestValidator()
                 );
@@ -122,7 +124,7 @@ class ProjectTestGenerationServiceTest {
         Path generatedFile =
                 Path.of("UserServiceTest.java");
 
-        when(generationService.generate(sourceFile))
+        when(generationService.generate(projectRoot, sourceFile))
                 .thenReturn(generatedTest);
 
         when(sourceWriter.write(
@@ -165,7 +167,7 @@ class ProjectTestGenerationServiceTest {
                 .isEmpty();
 
         verify(generationService)
-                .generate(sourceFile);
+                .generate(projectRoot, sourceFile);
 
         verify(sourceWriter)
                 .write(
@@ -211,7 +213,7 @@ class ProjectTestGenerationServiceTest {
         Path generatedFile =
                 Path.of("UserServiceTest.java");
 
-        when(generationService.generate(sourceFile))
+        when(generationService.generate(projectRoot, sourceFile))
                 .thenReturn(generatedTest);
 
         when(sourceWriter.write(
@@ -246,7 +248,7 @@ class ProjectTestGenerationServiceTest {
                 );
 
         verify(generationService)
-                .generate(sourceFile);
+                .generate(projectRoot, sourceFile);
 
         verify(sourceWriter)
                 .write(

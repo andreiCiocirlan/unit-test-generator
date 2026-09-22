@@ -53,22 +53,18 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
 
         return new ClassModel(
                 compilationUnit.getPackageDeclaration()
-                        .map(packageDeclaration ->
-                                packageDeclaration.getNameAsString())
+                        .map(packageDeclaration -> packageDeclaration.getNameAsString())
                         .orElse(""),
-
                 classDeclaration.getNameAsString(),
-
                 annotations,
-
                 dependencies,
-
-                extractMethods(
-                        classDeclaration,
-                        dependencies
-                ),
-
-                springTypeClassifier.classify(annotations)
+                extractMethods(classDeclaration, dependencies),
+                springTypeClassifier.classify(annotations),
+                compilationUnit.getImports().stream()
+                        .map(importDeclaration -> importDeclaration.isAsterisk()
+                                ? importDeclaration.getNameAsString() + ".*"
+                                : importDeclaration.getNameAsString())
+                        .toList()
         );
     }
 

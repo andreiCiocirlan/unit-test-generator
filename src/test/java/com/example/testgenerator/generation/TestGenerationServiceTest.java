@@ -55,6 +55,7 @@ class TestGenerationServiceTest {
 
     @Test
     void shouldGenerateTestSource() {
+        Path projectRoot = Path.of(".");
 
         Path sourceFile = Path.of(
                 "src/test/resources/fixtures/UserService.java"
@@ -81,7 +82,7 @@ class TestGenerationServiceTest {
                 .thenReturn(expectedSource);
 
         GeneratedTest result =
-                service.generate(sourceFile);
+                service.generate(projectRoot, sourceFile);
 
         assertThat(result.source())
                 .isEqualTo(expectedSource);
@@ -103,6 +104,7 @@ class TestGenerationServiceTest {
 
     @Test
     void shouldPassCorrectRenderModelToRenderer() {
+        Path projectRoot = Path.of(".");
 
         Path sourceFile = Path.of(
                 "src/test/resources/fixtures/UserService.java"
@@ -123,7 +125,7 @@ class TestGenerationServiceTest {
         when(renderer.render(any()))
                 .thenReturn("generated source");
 
-        service.generate(sourceFile);
+        service.generate(projectRoot, sourceFile);
 
         ArgumentCaptor<TestRenderModel> captor =
                 ArgumentCaptor.forClass(
@@ -154,6 +156,7 @@ class TestGenerationServiceTest {
 
     @Test
     void shouldFailWhenNoScenariosAreGenerated() {
+        Path projectRoot = Path.of(".");
 
         Path sourceFile = Path.of(
                 "src/test/resources/fixtures/UserService.java"
@@ -169,7 +172,7 @@ class TestGenerationServiceTest {
                 .thenReturn(List.of());
 
         assertThatThrownBy(
-                () -> service.generate(sourceFile)
+                () -> service.generate(projectRoot, sourceFile)
         )
                 .isInstanceOf(
                         IllegalStateException.class
@@ -208,7 +211,8 @@ class TestGenerationServiceTest {
                         )
                 ),
                 List.of(),
-                SpringType.SERVICE
+                SpringType.SERVICE,
+                List.of()
         );
     }
 

@@ -36,6 +36,7 @@ public class ProjectTestGenerationService {
 
         GeneratedTest generatedTest =
                 generationService.generate(
+                        projectRoot,
                         sourceFile
                 );
 
@@ -59,7 +60,7 @@ public class ProjectTestGenerationService {
 
         GeneratedTest generatedTest =
                 generationService.generate(
-                        sourceFile
+                        projectRoot, sourceFile
                 );
 
         Path generatedFile =

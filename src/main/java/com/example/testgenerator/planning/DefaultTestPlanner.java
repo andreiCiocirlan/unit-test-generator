@@ -19,6 +19,7 @@ import com.example.testgenerator.planning.model.TestData;
 import com.example.testgenerator.planning.model.TestScenario;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -27,6 +28,12 @@ import java.util.stream.Collectors;
 
 @Component
 public class DefaultTestPlanner implements TestPlanner {
+
+    private final DefaultValueResolver valueResolver;
+
+    public DefaultTestPlanner(DefaultValueResolver valueResolver) {
+        this.valueResolver = valueResolver;
+    }
 
     // -----------------------------------------------------------------
     // Entry point
@@ -43,6 +50,14 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return scenarios;
+    }
+
+    @Override
+    public void configure(Path projectRoot, List<String> imports) {
+        valueResolver.configure(
+                projectRoot.resolve("src/main/java"),
+                imports
+        );
     }
 
     private List<TestScenario> planMethod(MethodModel method) {
@@ -975,7 +990,7 @@ public class DefaultTestPlanner implements TestPlanner {
     }
 
     private String dtoInitializer(String type) {
-        return type + ".builder().build(); // TODO";
+        return valueResolver.valueFor(type);
     }
 
     private String simpleName(String type) {

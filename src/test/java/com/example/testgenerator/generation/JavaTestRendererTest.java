@@ -7,6 +7,7 @@ import com.example.testgenerator.analysis.model.DependencyModel;
 import com.example.testgenerator.analysis.model.SpringType;
 import com.example.testgenerator.generation.model.TestRenderModel;
 import com.example.testgenerator.planning.DefaultTestPlanner;
+import com.example.testgenerator.planning.DefaultValueResolver;
 import com.example.testgenerator.planning.TestPlanner;
 import com.example.testgenerator.planning.model.ExpectedOutcome;
 import com.example.testgenerator.planning.model.OutcomeKind;
@@ -37,8 +38,10 @@ class JavaTestRendererTest {
                 new JavaParserConditionAnalyzer(methodCallAnalyzer, contextResolver)
         );
 
-        testPlanner =
-                new DefaultTestPlanner();
+        DtoAnalyzer dtoAnalyzer = new DtoAnalyzer();
+        DefaultValueResolver valueResolver = new DefaultValueResolver(dtoAnalyzer);
+
+        testPlanner = new DefaultTestPlanner(valueResolver);
 
         renderer =
                 new JavaTestRenderer();
@@ -336,7 +339,8 @@ class JavaTestRendererTest {
                         )
                 ),
                 List.of(),
-                SpringType.SERVICE
+                SpringType.SERVICE,
+                List.of()
         );
 
         TestScenario scenario =
