@@ -869,7 +869,7 @@ public class DefaultTestPlanner implements TestPlanner {
             testData.add(new TestData(
                     assignment.variableName(),
                     assignment.variableType(),
-                    createInitialization(assignment)
+                    createInitialization(assignment, method)
             ));
         }
 
@@ -1093,7 +1093,7 @@ public class DefaultTestPlanner implements TestPlanner {
         };
     }
 
-    private String createInitialization(AssignmentModel assignment) {
+    private String createInitialization(AssignmentModel assignment, MethodModel method) {
         String expression = assignment.expression();
         String type = assignment.variableType();
 
@@ -1104,6 +1104,19 @@ public class DefaultTestPlanner implements TestPlanner {
         // Real empty collections are almost always what you want as a
         // default in tests, and they compile.
         if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
+
+            if (isIterated(assignment, method)) {
+                String elementType = innerTypeOf(type);
+                String elementName = elementVariableNameFor(
+                        assignment.variableName(),
+                        method
+                );
+
+                if (elementName != null) {
+                    return "java.util.List.of(" + elementName + ")";
+                }
+            }
+
             return "java.util.List.of()";
         }
         if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
@@ -1122,6 +1135,67 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return expression;
+    }
+
+    /**
+     * Extract the type argument from a parameterized type.
+     * "List<Notification>" -> "Notification"
+     * "Map<String, X>"     -> "String, X"   (callers pick what they need)
+     * "Notification"       -> "Notification" (no-op)
+     */
+    private String innerTypeOf(String type) {
+        if (type == null) return type;
+        int lt = type.indexOf('<');
+        int gt = type.lastIndexOf('>');
+        if (lt < 0 || gt < 0 || gt <= lt) {
+            return type;
+        }
+        return type.substring(lt + 1, gt).trim();
+    }
+
+    /**
+     * Find the name of the variable that holds a single element of the
+     * iterated collection. Matches assignments of the form
+     *   <elementType> <name> = <collectionName>.get(...);
+     * Returns null if no such assignment exists.
+     */
+    private String elementVariableNameFor(
+            String collectionName,
+            MethodModel method) {
+
+        String needle = collectionName + ".get(";
+
+        for (AssignmentModel a : method.assignments()) {
+            if (a.expression().contains(needle)) {
+                return a.variableName();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * True if the collection variable is read in a way that implies
+     * iteration: size(), get(...), forEach(...), stream(), iterator().
+     */
+    private boolean isIterated(
+            AssignmentModel assignment,
+            MethodModel method) {
+
+        String varName = assignment.variableName();
+
+        for (MethodCallModel call : method.methodCalls()) {
+            if (!varName.equals(call.target())) continue;
+
+            String m = call.methodName();
+            if (m.equals("get")
+                || m.equals("size")
+                || m.equals("forEach")
+                || m.equals("stream")
+                || m.equals("iterator")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String eraseGenerics(String type) {
