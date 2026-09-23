@@ -1,10 +1,12 @@
 package com.example.testgenerator.planning;
 
 import com.example.testgenerator.analysis.DtoAnalyzer;
+import com.example.testgenerator.analysis.model.DtoModel;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class DefaultValueResolver {
@@ -22,7 +24,28 @@ public class DefaultValueResolver {
         this.imports = imports == null ? List.of() : imports;
     }
 
+    /** Existing single-arg entry point: no field overrides. */
     public String valueFor(String type) {
+        return valueFor(type, Map.of());
+    }
+
+    /**
+     * Same as valueFor(type), but for a DTO type the given fields are set
+     * to the given literal values instead of the type's default literal.
+     * For non-DTO types the overrides are ignored.
+     */
+    public String valueFor(String type, Map<String, String> overrides) {
+
+        // Scalars are never affected by overrides.
+        String scalar = scalarValueFor(type);
+        if (scalar != null) {
+            return scalar;
+        }
+
+        return defaultForComplex(type, overrides);
+    }
+
+    private String scalarValueFor(String type) {
         return switch (type) {
             case "String" -> "\"test@example.com\"";
             case "Long", "long" -> "1L";
@@ -37,11 +60,13 @@ public class DefaultValueResolver {
                     "java.time.Instant.parse(\"2024-01-01T00:00:00Z\")";
             case "BigDecimal", "java.math.BigDecimal" ->
                     "java.math.BigDecimal.ONE";
-            default -> defaultForComplex(type);
+            default -> null;
         };
     }
 
-    private String defaultForComplex(String type) {
+    private String defaultForComplex(
+            String type,
+            Map<String, String> overrides) {
 
         if (type.startsWith("Optional<")) {
             return "java.util.Optional.empty()";
@@ -56,34 +81,34 @@ public class DefaultValueResolver {
             return "java.util.Map.of()";
         }
 
-        // Nested DTO? Try to resolve and recursively build.
         if (sourceRoot != null) {
             var nested = dtoAnalyzer.resolve(type, sourceRoot, imports);
             if (nested.isPresent()) {
-                return buildDtoInitializer(nested.get());
+                return buildDtoInitializer(nested.get(), overrides);
             }
         }
 
-        // Last resort: a mock. Note the eraseGenerics fix for anything
-        // with type parameters.
         return "mock(" + eraseGenerics(type) + ".class)";
     }
 
     private String buildDtoInitializer(
-            com.example.testgenerator.analysis.model.DtoModel dto) {
+            DtoModel dto,
+            Map<String, String> overrides) {
 
         if (dto.hasBuilder()) {
             StringBuilder sb = new StringBuilder(simpleName(dto.qualifiedName()))
                     .append(".builder()");
             for (var f : dto.fields()) {
+                String value = overrides.containsKey(f.name())
+                        ? overrides.get(f.name())
+                        : valueFor(f.type(), Map.of());
                 sb.append(".").append(f.name())
-                  .append("(").append(valueFor(f.type())).append(")");
+                        .append("(").append(value).append(")");
             }
             sb.append(".build()");
             return sb.toString();
         }
 
-        // No builder: fall back to a mock.
         return "mock(" + simpleName(dto.qualifiedName()) + ".class)";
     }
 

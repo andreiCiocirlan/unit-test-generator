@@ -11,12 +11,7 @@ import com.example.testgenerator.analysis.model.ParameterModel;
 import com.example.testgenerator.analysis.model.ReturnModel;
 import com.example.testgenerator.analysis.model.ThrowModel;
 import com.example.testgenerator.analysis.model.TryModel;
-import com.example.testgenerator.planning.model.ExpectedOutcome;
-import com.example.testgenerator.planning.model.MockAction;
-import com.example.testgenerator.planning.model.MockSetup;
-import com.example.testgenerator.planning.model.OutcomeKind;
-import com.example.testgenerator.planning.model.TestData;
-import com.example.testgenerator.planning.model.TestScenario;
+import com.example.testgenerator.planning.model.*;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -740,11 +735,20 @@ public class DefaultTestPlanner implements TestPlanner {
         String nullCheckedParam =
                 nullCheckedParameter(condition, method);
 
+        GuardedField guarded = guardedField(condition, method);
+
         for (ParameterModel parameter : method.parameters()) {
             String initialization;
 
             if (parameter.name().equals(nullCheckedParam)) {
                 initialization = guardTriggeringValue(parameter, condition);
+            } else if (guarded != null
+                       && guarded.parameterName().equals(parameter.name())) {
+                initialization = parameterInitializerWithOverride(
+                        parameter,
+                        guarded.fieldName(),
+                        guarded.value()
+                );
             } else {
                 initialization = parameterInitializer(parameter);
             }
@@ -786,6 +790,78 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return testData;
+    }
+
+    private String parameterInitializerWithOverride(
+            ParameterModel parameter,
+            String fieldName,
+            String overrideValue) {
+
+        String type = parameter.type();
+
+        if (isWellKnownImmutable(type)) {
+            // Scalars can't have DTO fields; fall back to the normal path.
+            return parameterInitializer(parameter);
+        }
+
+        return valueResolver.valueFor(
+                type,
+                java.util.Map.of(fieldName, overrideValue)
+        );
+    }
+
+    /**
+     * If the guard expression inspects a getter on one of the method's
+     * parameters (e.g. request.getRecipient()), return the parameter name,
+     * the field name, and a literal value that makes the guard fire.
+     * <p>
+     * Handles the common shapes:
+     *   Utils.isBlank(param.getX())        -> ""
+     *   param.getX().isBlank()             -> ""
+     *   param.getX().isEmpty()             -> ""
+     *   !param.getX().isEmpty()            -> ""
+     *   param.getX() == null               -> "null"
+     */
+    private GuardedField guardedField(
+            ConditionModel condition,
+            MethodModel method) {
+
+        if (condition == null) {
+            return null;
+        }
+
+        String expr = condition.expression();
+
+        for (ParameterModel parameter : method.parameters()) {
+
+            Pattern p = Pattern.compile(
+                    "\\b" + Pattern.quote(parameter.name())
+                    + "\\s*\\.\\s*get([A-Z][A-Za-z0-9_]*)\\s*\\(\\)"
+            );
+            var m = p.matcher(expr);
+            if (!m.find()) {
+                continue;
+            }
+
+            String field = m.group(1);
+            String fieldName = Character.toLowerCase(field.charAt(0))
+                               + field.substring(1);
+
+            // Choose the overriding literal:
+            //   - "== null" on the getter -> null
+            //   - anything blank/empty-ish -> ""
+            boolean wantsNull = Pattern.compile(
+                    "\\b" + Pattern.quote(parameter.name())
+                    + "\\s*\\.\\s*get" + field + "\\s*\\(\\s*\\)"
+                    + "\\s*==\\s*null\\b"
+            ).matcher(expr).find();
+
+            String value = wantsNull ? "null" : "\"\"";
+
+            return new GuardedField(parameter.name(), fieldName, value);
+        }
+
+        return null;
     }
 
     /**
