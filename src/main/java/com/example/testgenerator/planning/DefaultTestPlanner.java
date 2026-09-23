@@ -15,10 +15,7 @@ import com.example.testgenerator.planning.model.*;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -467,16 +464,21 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private TestScenario happyPathScenario(MethodModel method) {
 
-        // Neutralize guards first.
-        List<MockSetup> setups = new ArrayList<>(guardNeutralizingSetupsForHappyPath(method));
+        List<MockSetup> setups = new ArrayList<>();
 
-        // Then handle other dependency calls that aren't guard predicates.
+        // 1. Neutralize guards.
+        setups.addAll(guardNeutralizingSetupsForHappyPath(method));
+
+        // 2. Stub getters on locals that come from dependency-call results.
         Set<String> guardKeys = method.conditions().stream()
                 .filter(this::isGuardClause)
                 .flatMap(c -> c.methodCalls().stream())
                 .map(this::callKey)
                 .collect(Collectors.toSet());
 
+        setups.addAll(resultGetterSetups(method, guardKeys));
+
+        // 3. Stub the dependency calls themselves.
         for (MethodCallModel call : method.methodCalls()) {
             if (call.context() != null && call.context().insideCatch()) continue;
             if (call.kind() != CallKind.DEPENDENCY) continue;
@@ -484,8 +486,6 @@ public class DefaultTestPlanner implements TestPlanner {
 
             setups.addAll(createMockSetups(call, method));
         }
-
-        setups.addAll(resultGetterSetups(method, guardKeys));
 
         return new TestScenario(
                 method.name(),
@@ -888,7 +888,78 @@ public class DefaultTestPlanner implements TestPlanner {
             ));
         }
 
-        return testData;
+        return reorderByDependency(testData);
+    }
+
+    /**
+     * Reorder test data so that any variable referenced by another
+     * variable's initializer is declared first. Uses Kahn's algorithm over
+     * a dependency graph derived from whole-word references in the
+     * initializers.
+     *
+     * Falls back to the original order for any variables involved in a
+     * cycle, so the result is always a complete list.
+     */
+    private List<TestData> reorderByDependency(List<TestData> input) {
+
+        Set<String> names = input.stream()
+                .map(TestData::variableName)
+                .collect(Collectors.toSet());
+
+        // Build dependency map: for each TestData, the set of other
+        // TestData names it references in its initializer.
+        Map<String, Set<String>> deps = new LinkedHashMap<>();
+        for (TestData td : input) {
+            Set<String> referenced = new HashSet<>();
+            for (String name : names) {
+                if (name.equals(td.variableName())) continue;
+                if (containsWholeWord(td.initialization(), name)) {
+                    referenced.add(name);
+                }
+            }
+            deps.put(td.variableName(), referenced);
+        }
+
+        List<TestData> ordered = new ArrayList<>();
+        Set<String> emitted = new HashSet<>();
+        List<TestData> remaining = new ArrayList<>(input);
+
+        boolean progress = true;
+        while (progress && !remaining.isEmpty()) {
+            progress = false;
+            Iterator<TestData> it = remaining.iterator();
+            while (it.hasNext()) {
+                TestData td = it.next();
+                if (emitted.containsAll(deps.get(td.variableName()))) {
+                    ordered.add(td);
+                    emitted.add(td.variableName());
+                    it.remove();
+                    progress = true;
+                }
+            }
+        }
+
+        // Cycle or unresolved references: append the rest in original order.
+        ordered.addAll(remaining);
+        return ordered;
+    }
+
+    /**
+     * True if `word` appears in `text` as a standalone identifier (word
+     * boundaries on both sides). Prevents `pending` from matching inside
+     * `pendingIndex`, and `limit` from matching inside `unlimited`.
+     *
+     * Also rejects matches preceded by a dot, so `repository.save(x)` does
+     * not match a test-data variable named `save`.
+     */
+    private boolean containsWholeWord(String text, String word) {
+        if (text == null || word == null || word.isEmpty()) {
+            return false;
+        }
+        Pattern p = Pattern.compile(
+                "(?<![.\\w])" + Pattern.quote(word) + "\\b"
+        );
+        return p.matcher(text).find();
     }
 
     private String parameterInitializerWithOverride(
