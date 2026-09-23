@@ -7,9 +7,12 @@ import com.example.testgenerator.execution.*;
 import com.example.testgenerator.generation.model.GeneratedTest;
 import com.example.testgenerator.generation.writer.JavaTestSourceWriter;
 import com.example.testgenerator.generation.writer.TestSourceWriter;
+import com.example.testgenerator.planning.DefaultTestPlanner;
 import com.example.testgenerator.planning.DefaultValueResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -40,47 +43,45 @@ class ProjectTestGenerationServiceTest {
     @InjectMocks
     private ProjectTestGenerationService service;
 
-    @Test
-    void shouldGenerateAndCompileUserServiceIntegrationTest() {
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "src/main/java/com/example/user/UserService.java",
+            "src/main/java/com/example/order/OrderService.java",
+            "src/main/java/com/example/notification/NotificationService.java"
+    })
+    void shouldGenerateAndCompileIntegrationTest(String relativePath) {
 
         Path projectRoot =
-                Path.of(
-                        "C:\\Users\\andre\\IdeaProjects\\book"
-                );
+                Path.of("C:\\Users\\andre\\IdeaProjects\\book");
 
         Path sourceFile =
-                projectRoot.resolve(
-//                        "src/main/java/com/example/user/UserService.java"
-                        "src/main/java/com/example/order/OrderService.java"
-                );
+                projectRoot.resolve(relativePath);
 
-        // We'll use the real Spring components here.
         StatementContextResolver contextResolver = new StatementContextResolver();
-        JavaParserMethodCallAnalyzer methodCallAnalyzer = new JavaParserMethodCallAnalyzer(contextResolver);
+        JavaParserMethodCallAnalyzer methodCallAnalyzer =
+                new JavaParserMethodCallAnalyzer(contextResolver);
+
         var analyzer =
                 new com.example.testgenerator.analysis.JavaParserAnalyzer(
                         new com.example.testgenerator.analysis.SpringTypeClassifier(),
                         new com.example.testgenerator.analysis.ConstructorResolver(),
-                        new com.example.testgenerator.analysis.JavaParserMethodCallAnalyzer(contextResolver),
-                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(methodCallAnalyzer, contextResolver)
+                        new JavaParserMethodCallAnalyzer(contextResolver),
+                        new com.example.testgenerator.analysis.JavaParserConditionAnalyzer(
+                                methodCallAnalyzer, contextResolver)
                 );
 
         var generationService =
                 new TestGenerationService(
                         analyzer,
-                        new com.example.testgenerator.planning.DefaultTestPlanner(new DefaultValueResolver(new DtoAnalyzer())),
+                        new DefaultTestPlanner(
+                                new DefaultValueResolver(new DtoAnalyzer())),
                         new JavaTestRenderer(),
-                        new com.example.testgenerator.execution.JavaParserGeneratedTestValidator()
+                        new JavaParserGeneratedTestValidator()
                 );
 
-        var sourceWriter =
-                new JavaTestSourceWriter();
-
-        GeneratedTestCompiler compiler =
-                new com.example.testgenerator.execution.MavenGeneratedTestCompiler();
-
-        GeneratedTestExecutor executor =
-                new MavenGeneratedTestExecutor();
+        var sourceWriter = new JavaTestSourceWriter();
+        GeneratedTestCompiler compiler = new MavenGeneratedTestCompiler();
+        GeneratedTestExecutor executor = new MavenGeneratedTestExecutor();
 
         var service =
                 new ProjectTestGenerationService(
@@ -91,14 +92,10 @@ class ProjectTestGenerationServiceTest {
                 );
 
         CompilationResult result =
-                service.generateAndCompile(
-                        projectRoot,
-                        sourceFile
-                );
+                service.generateAndCompile(projectRoot, sourceFile);
 
         assertThat(result.successful())
                 .isTrue();
-
     }
 
     @Test
