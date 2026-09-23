@@ -316,6 +316,21 @@ public class DefaultTestPlanner implements TestPlanner {
             ));
         }
 
+        // 5. Verify the dependency calls in the finally block, if any.
+        for (MethodCallModel call : tryModel.finallyCalls()) {
+            if (call.kind() != CallKind.DEPENDENCY) {
+                continue;
+            }
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.VERIFY,
+                    ""
+            ));
+        }
+
         ExpectedOutcome outcome;
         if (!catchModel.throwsStatements().isEmpty()) {
             ThrowModel t = catchModel.throwsStatements().get(0);

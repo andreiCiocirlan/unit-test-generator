@@ -349,7 +349,13 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
                 .map(catchClause -> toCatchModel(catchClause, dependencies))
                 .toList();
 
-        return new TryModel(bodyCalls, bodyReturns, bodyThrows, catches);
+        List<MethodCallModel> finallyCalls = tryStmt.getFinallyBlock()
+                .map(block -> block.findAll(MethodCallExpr.class).stream()
+                        .map(call -> methodCallAnalyzer.analyze(call, dependencies))
+                        .toList())
+                .orElse(List.of());
+
+        return new TryModel(bodyCalls, bodyReturns, bodyThrows, catches, finallyCalls);
     }
 
     private CatchModel toCatchModel(
