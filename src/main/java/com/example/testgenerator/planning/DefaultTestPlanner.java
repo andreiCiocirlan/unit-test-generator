@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -464,10 +465,12 @@ public class DefaultTestPlanner implements TestPlanner {
         for (MethodCallModel call : method.methodCalls()) {
             if (call.context() != null && call.context().insideCatch()) continue;
             if (call.kind() != CallKind.DEPENDENCY) continue;
-            if (guardKeys.contains(callKey(call))) continue;  // already handled
+            if (guardKeys.contains(callKey(call))) continue;
 
             setups.addAll(createMockSetups(call, method));
         }
+
+        setups.addAll(resultGetterSetups(method, guardKeys));
 
         return new TestScenario(
                 method.name(),
@@ -479,6 +482,87 @@ public class DefaultTestPlanner implements TestPlanner {
                 setups,
                 createNormalExpectedOutcome(method)
         );
+    }
+
+    private List<MockSetup> resultGetterSetups(
+            MethodModel method,
+            Set<String> alreadyHandledKeys) {
+
+        List<MockSetup> setups = new ArrayList<>();
+
+        // 1. Find locals bound to a dependency call:
+        //    <Type> <var> = <dep>.<method>(...)
+        Set<String> dependencyResultLocals = new HashSet<>();
+        for (AssignmentModel assignment : method.assignments()) {
+            for (MethodCallModel call : method.methodCalls()) {
+                if (call.kind() != CallKind.DEPENDENCY) continue;
+
+                String needle = call.target() + "." + call.methodName() + "(";
+                if (assignment.expression().contains(needle)) {
+                    dependencyResultLocals.add(assignment.variableName());
+                }
+            }
+        }
+
+        if (dependencyResultLocals.isEmpty()) {
+            return setups;
+        }
+
+        // 2. For calls on those locals, stub a return value.
+        for (MethodCallModel call : method.methodCalls()) {
+            if (!dependencyResultLocals.contains(call.target())) continue;
+
+            // Skip if we've already handled this call elsewhere (avoids
+            // duplicating verifies).
+            if (alreadyHandledKeys.contains(callKey(call))) continue;
+
+            String value = defaultReturnForGetter(call);
+            if (value == null) continue;
+
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.RETURN,
+                    value
+            ));
+        }
+
+        return setups;
+    }
+
+    /**
+     * Return a sensible default literal for a getter-style method, or null
+     * if we don't know how to stub it and should skip it.
+     */
+    private String defaultReturnForGetter(
+            MethodCallModel call) {
+
+        String name = call.methodName();
+
+        // Real getters take no arguments. list.get(0), map.get(key), etc.
+        // are collection access, not property getters.
+        if (!call.arguments().isEmpty()) {
+            return null;
+        }
+
+        if (name.startsWith("is")) {
+            return "true";
+        }
+
+        if (name.startsWith("get")) {
+            if (name.equals("getMessageId")
+                || name.endsWith("Message")
+                || name.endsWith("Id")
+                || name.endsWith("Name")
+                || name.endsWith("Status")) {
+                return "\"msg-123\"";
+            }
+            return "\"test-value\"";
+        }
+
+        return null;
     }
 
     private List<MockSetup> guardNeutralizingSetupsForHappyPath(MethodModel method) {
