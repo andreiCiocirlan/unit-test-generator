@@ -531,6 +531,13 @@ public class DefaultTestPlanner implements TestPlanner {
             // duplicating verifies).
             if (alreadyHandledKeys.contains(callKey(call))) continue;
 
+            String name = call.methodName();
+            if (!name.startsWith("is")
+                && call.context() != null
+                && !call.context().ifConditions().isEmpty()) {
+                continue;
+            }
+
             String value = defaultReturnForGetter(call);
             if (value == null) continue;
 
