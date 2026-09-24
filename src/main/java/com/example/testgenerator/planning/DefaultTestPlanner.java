@@ -1,6 +1,5 @@
 package com.example.testgenerator.planning;
 
-import com.example.testgenerator.analysis.model.AssignmentModel;
 import com.example.testgenerator.analysis.model.CallKind;
 import com.example.testgenerator.analysis.model.CatchModel;
 import com.example.testgenerator.analysis.model.ClassModel;
@@ -26,9 +25,12 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private final TestDataAssembler testDataAssembler;
 
+    private final MockSetupAssembler mockSetupAssembler;
+
     public DefaultTestPlanner(DefaultValueResolver valueResolver) {
         this.valueResolver = valueResolver;
         this.testDataAssembler = new TestDataAssembler(valueResolver);
+        this.mockSetupAssembler = new MockSetupAssembler();
     }
 
     // -----------------------------------------------------------------
@@ -163,7 +165,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
                     guardStubValueFor(call, condition.expression())
             ));
@@ -295,7 +297,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     throwingCall.target(),
                     throwingCall.targetType(),
                     throwingCall.methodName(),
-                    normalizeArguments(throwingCall.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(throwingCall.arguments(), method),
                     MockAction.THROW,
                     catchModel.exceptionType()
             ));
@@ -310,7 +312,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
                     MockAction.VERIFY,
                     ""
             ));
@@ -325,7 +327,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
                     MockAction.VERIFY,
                     ""
             ));
@@ -388,17 +390,17 @@ public class DefaultTestPlanner implements TestPlanner {
             }
 
             // Skip calls whose result is not captured.
-            if (!callResultIsUsed(call, method)) continue;
+            if (!mockSetupAssembler.callResultIsUsed(call, method)) continue;
 
             // findReturnValue gives the variable name the result is bound to.
-            String value = findReturnValue(call, method);
+            String value = mockSetupAssembler.findReturnValue(call, method);
             if ("null".equals(value)) continue;
 
             setups.add(new MockSetup(
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
                     value
             ));
@@ -443,7 +445,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     firstDependency.target(),
                     firstDependency.targetType(),
                     firstDependency.methodName(),
-                    normalizeArguments(firstDependency.arguments(), method),
+                    mockSetupAssembler.normalizeArguments(firstDependency.arguments(), method),
                     MockAction.RETURN,
                     stub
             ));
@@ -476,18 +478,18 @@ public class DefaultTestPlanner implements TestPlanner {
         Set<String> guardKeys = method.conditions().stream()
                 .filter(this::isGuardClause)
                 .flatMap(c -> c.methodCalls().stream())
-                .map(this::callKey)
+                .map(mockSetupAssembler::callKey)
                 .collect(Collectors.toSet());
 
-        setups.addAll(resultGetterSetups(method, guardKeys));
+        setups.addAll(mockSetupAssembler.forResultGetters(method, guardKeys));
 
         // 3. Stub the dependency calls themselves.
         for (MethodCallModel call : method.methodCalls()) {
             if (call.context() != null && call.context().insideCatch()) continue;
             if (call.kind() != CallKind.DEPENDENCY) continue;
-            if (guardKeys.contains(callKey(call))) continue;
+            if (guardKeys.contains(mockSetupAssembler.callKey(call))) continue;
 
-            setups.addAll(createMockSetups(call, method));
+            setups.addAll(mockSetupAssembler.forDependencyCall(call, method));
         }
 
         return new TestScenario(
@@ -500,75 +502,6 @@ public class DefaultTestPlanner implements TestPlanner {
                 setups,
                 createNormalExpectedOutcome(method)
         );
-    }
-
-    private List<MockSetup> resultGetterSetups(
-            MethodModel method,
-            Set<String> alreadyHandledKeys) {
-
-        List<MockSetup> setups = new ArrayList<>();
-
-        // 1. Find locals bound to a dependency call:
-        //    <Type> <var> = <dep>.<method>(...)
-        Set<String> dependencyResultLocals = new HashSet<>();
-        for (AssignmentModel assignment : method.assignments()) {
-            for (MethodCallModel call : method.methodCalls()) {
-                if (call.kind() != CallKind.DEPENDENCY) continue;
-
-                String needle = call.target() + "." + call.methodName() + "(";
-                if (assignment.expression().contains(needle)) {
-                    dependencyResultLocals.add(assignment.variableName());
-                }
-            }
-        }
-
-        if (dependencyResultLocals.isEmpty()) {
-            return setups;
-        }
-
-        // 2. For calls on those locals, stub a return value.
-        for (MethodCallModel call : method.methodCalls()) {
-            if (!dependencyResultLocals.contains(call.target())) continue;
-            if (alreadyHandledKeys.contains(callKey(call))) continue;
-            if (!call.arguments().isEmpty()) continue;
-
-            // Skip calls on locals whose declared type is a collection or
-            // scalar — those are initialized as real objects, not mocks, so
-            // they can't be stubbed.
-            String localType = declaredTypeOf(call.target(), method);
-            if (TypeValueSupport.isCollectionType(localType) || TypeValueSupport.isWellKnownImmutable(localType)) {
-                continue;
-            }
-
-            String name = call.methodName();
-            if (!name.startsWith("is")
-                && call.context() != null
-                && !call.context().ifConditions().isEmpty()) {
-                continue;
-            }
-
-            String value = TypeValueSupport.defaultReturnForGetter(call);
-            if (value == null) continue;
-
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    value
-            ));
-        }
-
-        return setups;
-    }
-
-    private String declaredTypeOf(String variableName, MethodModel method) {
-        return method.assignments().stream()
-                .filter(a -> a.variableName().equals(variableName))
-                .map(AssignmentModel::variableType)
-                .findFirst()
-                .orElse("");
     }
 
 
@@ -596,7 +529,7 @@ public class DefaultTestPlanner implements TestPlanner {
                         call.target(),
                         call.targetType(),
                         call.methodName(),
-                        normalizeArguments(call.arguments(), method),
+                        mockSetupAssembler.normalizeArguments(call.arguments(), method),
                         MockAction.RETURN,
                         stub
                 ));
@@ -622,7 +555,7 @@ public class DefaultTestPlanner implements TestPlanner {
 
         for (ConditionModel condition : method.conditions()) {
             if (condition.methodCalls().stream()
-                    .anyMatch(c -> callKey(c).equals(callKey(call)))) {
+                    .anyMatch(c -> mockSetupAssembler.callKey(c).equals(mockSetupAssembler.callKey(call)))) {
                 return condition.expression();
             }
         }
@@ -638,130 +571,6 @@ public class DefaultTestPlanner implements TestPlanner {
             case "null" -> "mock(Object.class)";
             default -> "false";
         };
-    }
-
-    private String callKey(MethodCallModel call) {
-        return call.target() + "."
-               + call.methodName()
-               + call.arguments();
-    }
-
-    // -----------------------------------------------------------------
-    // Mock setup construction
-    // -----------------------------------------------------------------
-
-    private List<MockSetup> createMockSetups(
-            MethodCallModel call,
-            MethodModel method) {
-
-        List<MockSetup> setups = new ArrayList<>();
-
-        // Always verify dependency calls in the happy path.
-        MockSetup verifySetup = new MockSetup(
-                call.target(),
-                call.targetType(),
-                call.methodName(),
-                normalizeArguments(call.arguments(), method),
-                MockAction.VERIFY,
-                ""
-        );
-
-        if (TypeValueSupport.isOptionalOrElseThrow(method, call)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    "java.util.Optional.of("
-                    + TypeValueSupport.expectedVariableName(method)
-                    + ")"
-            ));
-            setups.add(verifySetup);
-            return setups;
-        }
-
-        String value = findReturnValue(call, method);
-
-        if (!"null".equals(value)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    value
-            ));
-            setups.add(verifySetup);
-            return setups;
-        }
-
-        if (callResultIsUsed(call, method)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    normalizeArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    TypeValueSupport.defaultValueFor(method.returnType())
-            ));
-            setups.add(verifySetup);
-            return setups;
-        }
-
-        // Pure side-effect call: verify only.
-        setups.add(verifySetup);
-        return setups;
-    }
-
-    private List<String> normalizeArguments(
-            List<String> arguments,
-            MethodModel method) {
-
-        return arguments.stream()
-                .map(a -> normalizeMockArgument(a, method))
-                .toList();
-    }
-
-    private String normalizeMockArgument(
-            String argument,
-            MethodModel method) {
-
-        return method.assignments().stream()
-                .filter(a -> a.variableName().equals(argument))
-                .filter(a -> a.expression().startsWith("new "))
-                .map(a -> "any(" + a.variableType() + ".class)")
-                .findFirst()
-                .orElse(argument);
-    }
-
-    private boolean callResultIsUsed(
-            MethodCallModel call,
-            MethodModel method) {
-
-        String needle = call.target() + "." + call.methodName() + "(";
-
-        // Assigned to a variable?
-        boolean assigned = method.assignments().stream()
-                .anyMatch(a -> a.expression().contains(needle));
-
-        // Returned directly?
-        boolean returned = method.returns().stream()
-                .anyMatch(r -> r.expression().contains(needle));
-
-        return assigned || returned;
-    }
-
-    private String findReturnValue(
-            MethodCallModel call,
-            MethodModel method) {
-
-        return method.assignments().stream()
-                .filter(a -> a.expression().contains(
-                        call.target() + "." + call.methodName()))
-                .map(AssignmentModel::variableName)
-                .findFirst()
-                .orElse("null");
     }
 
     // -----------------------------------------------------------------
@@ -811,10 +620,5 @@ public class DefaultTestPlanner implements TestPlanner {
 
         return new ExpectedOutcome(OutcomeKind.VOID, "");
     }
-
-    // -----------------------------------------------------------------
-    // Test data
-    // -----------------------------------------------------------------
-
 
 }
