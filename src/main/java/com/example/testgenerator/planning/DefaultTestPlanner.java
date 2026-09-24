@@ -526,10 +526,16 @@ public class DefaultTestPlanner implements TestPlanner {
         // 2. For calls on those locals, stub a return value.
         for (MethodCallModel call : method.methodCalls()) {
             if (!dependencyResultLocals.contains(call.target())) continue;
-
-            // Skip if we've already handled this call elsewhere (avoids
-            // duplicating verifies).
             if (alreadyHandledKeys.contains(callKey(call))) continue;
+            if (!call.arguments().isEmpty()) continue;
+
+            // Skip calls on locals whose declared type is a collection or
+            // scalar — those are initialized as real objects, not mocks, so
+            // they can't be stubbed.
+            String localType = declaredTypeOf(call.target(), method);
+            if (isCollectionType(localType) || isWellKnownImmutable(localType)) {
+                continue;
+            }
 
             String name = call.methodName();
             if (!name.startsWith("is")
@@ -552,6 +558,27 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return setups;
+    }
+
+    private String declaredTypeOf(String variableName, MethodModel method) {
+        return method.assignments().stream()
+                .filter(a -> a.variableName().equals(variableName))
+                .map(AssignmentModel::variableType)
+                .findFirst()
+                .orElse("");
+    }
+
+    private boolean isCollectionType(String type) {
+        if (type == null) return false;
+        return type.startsWith("List<")
+               || type.startsWith("java.util.List<")
+               || type.startsWith("Set<")
+               || type.startsWith("java.util.Set<")
+               || type.startsWith("Map<")
+               || type.startsWith("java.util.Map<")
+               || type.equals("List")
+               || type.equals("Set")
+               || type.equals("Map");
     }
 
     /**
