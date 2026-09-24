@@ -521,7 +521,7 @@ public class DefaultTestPlanner implements TestPlanner {
             for (MethodCallModel call : condition.methodCalls()) {
                 if (call.kind() != CallKind.DEPENDENCY) continue;
 
-                String stub = isNegated(condition.expression(), call)
+                String stub = isCallNegated(condition.expression(), call)
                         ? "true"    // !call -> stub true so !true = false
                         : "false";  // call -> stub false so false
 
@@ -538,28 +538,6 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return setups;
-    }
-
-    private boolean isNegated(String expression, MethodCallModel call) {
-        String needle = call.target() + "." + call.methodName();
-        int idx = expression.indexOf(needle);
-        if (idx <= 0) return false;
-        // Look back a few chars for a `!`
-        int lookbackStart = Math.max(0, idx - 3);
-        return expression.substring(lookbackStart, idx).contains("!");
-    }
-
-    private String conditionFor(
-            MethodModel method,
-            MethodCallModel call) {
-
-        for (ConditionModel condition : method.conditions()) {
-            if (condition.methodCalls().stream()
-                    .anyMatch(c -> mockSetupAssembler.callKey(c).equals(mockSetupAssembler.callKey(call)))) {
-                return condition.expression();
-            }
-        }
-        return "";
     }
 
     private String negateConditionStub(String stubValue) {
