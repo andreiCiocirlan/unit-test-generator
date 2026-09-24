@@ -1,6 +1,9 @@
 package com.example.testgenerator.planning;
 
+import com.example.testgenerator.analysis.model.CallKind;
 import com.example.testgenerator.analysis.model.MethodCallModel;
+import com.example.testgenerator.analysis.model.MethodModel;
+import com.example.testgenerator.analysis.model.ReturnModel;
 
 /**
  * Pure helpers for reasoning about Java type names and default values.
@@ -110,5 +113,34 @@ public final class TypeValueSupport {
         }
 
         return null;
+    }
+
+    public static boolean isOptionalOrElseThrow(
+            MethodModel method,
+            MethodCallModel call) {
+
+        if (call.kind() != CallKind.DEPENDENCY) {
+            return false;
+        }
+
+        return method.returns().stream()
+                .map(ReturnModel::expression)
+                .anyMatch(e -> e.contains(
+                        call.target() + "." + call.methodName())
+                               && e.endsWith(".orElseThrow()"));
+    }
+
+    public static String expectedVariableName(MethodModel method) {
+        String returnType = method.returnType();
+        if (returnType == null || returnType.isBlank()) {
+            return "expectedValue";
+        }
+
+        String simple = TypeValueSupport.simpleName(
+                TypeValueSupport.eraseGenerics(returnType)
+        );
+        return "expected"
+               + Character.toUpperCase(simple.charAt(0))
+               + simple.substring(1);
     }
 }
