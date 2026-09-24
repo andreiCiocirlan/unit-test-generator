@@ -107,7 +107,7 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
 
         List<DependencyModel> dependencies = new ArrayList<>();
 
-        addFinalFieldDependencies(classDeclaration, dependencies);
+        addFieldDependencies(classDeclaration, dependencies);
 
         if (dependencies.isEmpty()) {
             constructorResolver
@@ -119,33 +119,39 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
         return dependencies;
     }
 
-    private void addFinalFieldDependencies(
+    private void addFieldDependencies(
             ClassOrInterfaceDeclaration classDeclaration,
             List<DependencyModel> dependencies) {
 
         for (FieldDeclaration field : classDeclaration.getFields()) {
 
             boolean isPrivate = field.hasModifier(Modifier.Keyword.PRIVATE);
-            boolean isFinal   = field.hasModifier(Modifier.Keyword.FINAL);
+            boolean isStatic  = field.hasModifier(Modifier.Keyword.STATIC);
 
-            if (!isPrivate || !isFinal) {
+            if (!isPrivate || isStatic) {
                 continue;
             }
 
-            // Skip static fields (e.g. constants) — they aren't injected
-            if (field.hasModifier(Modifier.Keyword.STATIC)) {
+            boolean isFinal = field.hasModifier(Modifier.Keyword.FINAL);
+            boolean hasInjectionAnnotation = field.getAnnotations().stream()
+                    .anyMatch(a -> {
+                        String name = a.getNameAsString();
+                        return name.equals("Autowired")
+                               || name.equals("PersistenceContext")
+                               || name.equals("Inject")
+                               || name.equals("Resource");
+                    });
+
+            if (!isFinal && !hasInjectionAnnotation) {
                 continue;
             }
 
             for (VariableDeclarator variable : field.getVariables()) {
-
-                dependencies.add(
-                        new DependencyModel(
-                                variable.getTypeAsString(),
-                                variable.getNameAsString(),
-                                DependencyKind.MOCK
-                        )
-                );
+                dependencies.add(new DependencyModel(
+                        variable.getTypeAsString(),
+                        variable.getNameAsString(),
+                        DependencyKind.MOCK
+                ));
             }
         }
     }
