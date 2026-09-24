@@ -359,6 +359,13 @@ public class TestDataAssembler {
                 .map(ConditionModel::expression)
                 .forEach(referenced::add);
 
+        // NEW: assignment expressions — because one assignment may reference
+        // another local (e.g. `notification = pending.get(i)` references
+        // `pending`), and the reorder pass relies on both being present.
+        method.assignments().stream()
+                .map(AssignmentModel::expression)
+                .forEach(referenced::add);
+
         return method.assignments().stream()
                 .filter(a -> !a.expression().isBlank())
                 .filter(a ->
