@@ -533,7 +533,7 @@ public class DefaultTestPlanner implements TestPlanner {
             // scalar — those are initialized as real objects, not mocks, so
             // they can't be stubbed.
             String localType = declaredTypeOf(call.target(), method);
-            if (isCollectionType(localType) || isWellKnownImmutable(localType)) {
+            if (TypeValueSupport.isCollectionType(localType) || TypeValueSupport.isWellKnownImmutable(localType)) {
                 continue;
             }
 
@@ -544,7 +544,7 @@ public class DefaultTestPlanner implements TestPlanner {
                 continue;
             }
 
-            String value = defaultReturnForGetter(call);
+            String value = TypeValueSupport.defaultReturnForGetter(call);
             if (value == null) continue;
 
             setups.add(new MockSetup(
@@ -568,51 +568,6 @@ public class DefaultTestPlanner implements TestPlanner {
                 .orElse("");
     }
 
-    private boolean isCollectionType(String type) {
-        if (type == null) return false;
-        return type.startsWith("List<")
-               || type.startsWith("java.util.List<")
-               || type.startsWith("Set<")
-               || type.startsWith("java.util.Set<")
-               || type.startsWith("Map<")
-               || type.startsWith("java.util.Map<")
-               || type.equals("List")
-               || type.equals("Set")
-               || type.equals("Map");
-    }
-
-    /**
-     * Return a sensible default literal for a getter-style method, or null
-     * if we don't know how to stub it and should skip it.
-     */
-    private String defaultReturnForGetter(
-            MethodCallModel call) {
-
-        String name = call.methodName();
-
-        // Real getters take no arguments. list.get(0), map.get(key), etc.
-        // are collection access, not property getters.
-        if (!call.arguments().isEmpty()) {
-            return null;
-        }
-
-        if (name.startsWith("is")) {
-            return "true";
-        }
-
-        if (name.startsWith("get")) {
-            if (name.equals("getMessageId")
-                || name.endsWith("Message")
-                || name.endsWith("Id")
-                || name.endsWith("Name")
-                || name.endsWith("Status")) {
-                return "\"msg-123\"";
-            }
-            return "\"test-value\"";
-        }
-
-        return null;
-    }
 
     private List<MockSetup> guardNeutralizingSetupsForHappyPath(MethodModel method) {
 
@@ -745,7 +700,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.methodName(),
                     normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
-                    defaultValueFor(method.returnType())
+                    TypeValueSupport.defaultValueFor(method.returnType())
             ));
             setups.add(verifySetup);
             return setups;
@@ -839,7 +794,7 @@ public class DefaultTestPlanner implements TestPlanner {
                 if (returnModel.expression().contains(needle)) {
                     return new ExpectedOutcome(
                             OutcomeKind.RETURN_VALUE,
-                            defaultValueFor(method.returnType())
+                            TypeValueSupport.defaultValueFor(method.returnType())
                     );
                 }
             }
@@ -1003,7 +958,7 @@ public class DefaultTestPlanner implements TestPlanner {
 
         String type = parameter.type();
 
-        if (isWellKnownImmutable(type)) {
+        if (TypeValueSupport.isWellKnownImmutable(type)) {
             // Scalars can't have DTO fields; fall back to the normal path.
             return parameterInitializer(parameter);
         }
@@ -1197,28 +1152,20 @@ public class DefaultTestPlanner implements TestPlanner {
         return method.assignments().stream()
                 .filter(a -> !a.expression().isBlank())
                 .filter(a ->
-                        isPrimitiveType(a.variableType())
-                        || isWellKnownImmutable(a.variableType())
+                        TypeValueSupport.isPrimitiveType(a.variableType())
+                        || TypeValueSupport.isWellKnownImmutable(a.variableType())
                         || referenced.stream().anyMatch(expr ->
                                 Pattern.compile("\\b" + Pattern.quote(a.variableName()) + "\\b")
                                         .matcher(expr).find()))
                 .toList();
     }
 
-    private boolean isPrimitiveType(String type) {
-        return switch (type) {
-            case "int", "long", "short", "byte",
-                 "double", "float", "boolean", "char" -> true;
-            default -> false;
-        };
-    }
-
     private String createInitialization(AssignmentModel assignment, MethodModel method) {
         String expression = assignment.expression();
         String type = assignment.variableType();
 
-        if (isWellKnownImmutable(type)) {
-            return defaultValueFor(type);
+        if (TypeValueSupport.isWellKnownImmutable(type)) {
+            return TypeValueSupport.defaultValueFor(type);
         }
 
         // Real empty collections are almost always what you want as a
@@ -1226,7 +1173,7 @@ public class DefaultTestPlanner implements TestPlanner {
         if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
 
             if (isIterated(assignment, method)) {
-                String elementType = innerTypeOf(type);
+                String elementType = TypeValueSupport.innerTypeOf(type);
                 String elementName = elementVariableNameFor(
                         assignment.variableName(),
                         method
@@ -1251,27 +1198,12 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         if (expression.contains(".")) {
-            return "mock(" + eraseGenerics(type) + ".class)";
+            return "mock(" + TypeValueSupport.eraseGenerics(type) + ".class)";
         }
 
         return expression;
     }
 
-    /**
-     * Extract the type argument from a parameterized type.
-     * "List<Notification>" -> "Notification"
-     * "Map<String, X>"     -> "String, X"   (callers pick what they need)
-     * "Notification"       -> "Notification" (no-op)
-     */
-    private String innerTypeOf(String type) {
-        if (type == null) return type;
-        int lt = type.indexOf('<');
-        int gt = type.lastIndexOf('>');
-        if (lt < 0 || gt < 0 || gt <= lt) {
-            return type;
-        }
-        return type.substring(lt + 1, gt).trim();
-    }
 
     /**
      * Find the name of the variable that holds a single element of the
@@ -1318,48 +1250,14 @@ public class DefaultTestPlanner implements TestPlanner {
         return false;
     }
 
-    private String eraseGenerics(String type) {
-        int idx = type.indexOf('<');
-        return idx < 0 ? type : type.substring(0, idx);
-    }
-
-    private boolean isWellKnownImmutable(String type) {
-        return switch (type) {
-            case "String", "Long", "Integer", "int", "long",
-                 "Double", "double", "Float", "float",
-                 "Boolean", "boolean", "Short", "short",
-                 "Byte", "byte", "Character", "char" -> true;
-            default -> false;
-        };
-    }
-
-    private String defaultValueFor(String type) {
-        if (type != null && type.startsWith("Optional<")) {
-            return "java.util.Optional.empty()";
-        }
-
-        return switch (type) {
-            case "String" -> "\"test@example.com\"";
-            case "Long", "long" -> "1L";
-            case "Integer", "int" -> "1";
-            case "Double", "double" -> "1.0";
-            case "Float", "float" -> "1.0f";
-            case "Boolean", "boolean" -> "true";
-            case "Short", "short" -> "(short) 1";
-            case "Byte", "byte" -> "(byte) 1";
-            case "Character", "char" -> "'a'";
-            default -> "null";
-        };
-    }
-
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
     private String parameterInitializer(ParameterModel parameter) {
         String type = parameter.type();
 
-        if (isWellKnownImmutable(type)) {
-            return defaultValueFor(type);
+        if (TypeValueSupport.isWellKnownImmutable(type)) {
+            return TypeValueSupport.defaultValueFor(type);
         }
 
         return dtoInitializer(type);
@@ -1367,19 +1265,6 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private String dtoInitializer(String type) {
         return valueResolver.valueFor(type);
-    }
-
-    private String simpleName(String type) {
-        if (type == null || type.isBlank()) return type;
-        int generic = type.indexOf('<');
-        String noGenerics = generic < 0 ? type : type.substring(0, generic);
-        int lastDot = noGenerics.lastIndexOf('.');
-        return lastDot < 0 ? noGenerics : noGenerics.substring(lastDot + 1);
-    }
-
-    private String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     private boolean isOptionalOrElseThrow(
@@ -1406,7 +1291,7 @@ public class DefaultTestPlanner implements TestPlanner {
             return "expectedValue";
         }
 
-        String simple = simpleName(eraseGenerics(returnType));  // e.g. "Optional"
+        String simple = TypeValueSupport.simpleName(TypeValueSupport.eraseGenerics(returnType));  // e.g. "Optional"
         return "expected"
                + Character.toUpperCase(simple.charAt(0))
                + simple.substring(1);
