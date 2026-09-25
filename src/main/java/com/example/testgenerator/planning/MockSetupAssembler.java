@@ -144,6 +144,14 @@ public class MockSetupAssembler {
                 continue;
             }
 
+            // NEW: skip locals that are initialized as real instances.
+            // `new Type()` is not a mock, so `when(...)` on its getters
+            // throws MissingMethodInvocationException.
+            if (valueResolver.isInstantiableNoArg(localType)
+                || valueResolver.isInstantiableAllArgs(localType)) {
+                continue;
+            }
+
             String name = call.methodName();
             if (!name.startsWith("is")
                 && call.context() != null
