@@ -194,9 +194,7 @@ public class TestDataAssembler {
             ConditionModel condition,
             MethodModel method) {
 
-        if (condition == null) {
-            return null;
-        }
+        if (condition == null) return null;
 
         String expr = condition.expression();
 
@@ -207,21 +205,37 @@ public class TestDataAssembler {
                     + "\\s*\\.\\s*get([A-Z][A-Za-z0-9_]*)\\s*\\(\\)"
             );
             var m = p.matcher(expr);
-            if (!m.find()) {
-                continue;
-            }
+            if (!m.find()) continue;
 
             String field = m.group(1);
             String fieldName = Character.toLowerCase(field.charAt(0))
                                + field.substring(1);
 
-            // Choose the overriding literal:
-            //   - "== null" on the getter -> null
-            //   - anything blank/empty-ish -> ""
+            // Does the guard actually predicate on the getter's value?
+            // i.e. `Utils.isBlank(param.getX())`, `param.getX().isBlank()`,
+            // `param.getX().isEmpty()`, `param.getX() == null`, `!param.getX().isEmpty()`.
+            // If instead the getter is just an argument to a dependency call
+            // (`repository.existsByReference(param.getX())`), the field should
+            // be populated normally and the dependency call stubbed.
+            String getterCall = parameter.name() + ".get" + field + "()";
+
+            boolean predicatesOnGetter =
+                    Pattern.compile("\\b(isBlank|isEmpty)\\s*\\(\\s*"
+                                    + Pattern.quote(getterCall) + "\\s*\\)")
+                            .matcher(expr).find()
+                    || expr.contains(getterCall + ".isBlank()")
+                    || expr.contains(getterCall + ".isEmpty()")
+                    || Pattern.compile("\\Q" + getterCall + "\\E\\s*==\\s*null")
+                            .matcher(expr).find()
+                    || Pattern.compile("\\Q" + getterCall + "\\E\\s*!=\\s*null")
+                            .matcher(expr).find();
+
+            if (!predicatesOnGetter) {
+                continue;   // <-- the field is used but not predicated on
+            }
+
             boolean wantsNull = Pattern.compile(
-                    "\\b" + Pattern.quote(parameter.name())
-                    + "\\s*\\.\\s*get" + field + "\\s*\\(\\s*\\)"
-                    + "\\s*==\\s*null\\b"
+                    "\\Q" + getterCall + "\\E\\s*==\\s*null"
             ).matcher(expr).find();
 
             String value = wantsNull ? "null" : "\"\"";
