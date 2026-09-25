@@ -293,7 +293,9 @@ public class JavaTestRenderer {
             source.append("        // Then\n");
 
             source.append("        assertThat(result)\n")
-                    .append("                .isEqualTo(")
+                    .append(outcome.identityExpected()
+                            ? "                .isSameAs("
+                            : "                .isEqualTo(")
                     .append(outcome.value())
                     .append(");\n");
 

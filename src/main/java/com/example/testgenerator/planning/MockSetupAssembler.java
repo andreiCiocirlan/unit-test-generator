@@ -21,6 +21,12 @@ import java.util.Set;
  */
 public class MockSetupAssembler {
 
+    private final DefaultValueResolver valueResolver;
+
+    public MockSetupAssembler(DefaultValueResolver valueResolver) {
+        this.valueResolver = valueResolver;
+    }
+
     /**
      * Returns one or more setups for the given dependency call:
      *   - a RETURN setup if the call's result is used (assigned or returned)
@@ -79,7 +85,7 @@ public class MockSetupAssembler {
                     call.methodName(),
                     normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
-                    TypeValueSupport.defaultValueFor(method.returnType())
+                    resolveReturnValue(method.returnType())
             ));
             setups.add(verifySetup);
             return setups;
@@ -88,6 +94,17 @@ public class MockSetupAssembler {
         // Pure side-effect call: verify only.
         setups.add(verifySetup);
         return setups;
+    }
+
+    private String resolveReturnValue(String type) {
+        if (valueResolver.isInstantiableNoArg(type)) {
+            return "new " + TypeValueSupport.simpleName(type) + "()";
+        }
+        if (valueResolver.isInstantiableAllArgs(type)) {
+            String init = valueResolver.allArgsConstructorInitializer(type);
+            if (init != null) return init;
+        }
+        return TypeValueSupport.defaultValueFor(type);
     }
 
     public List<MockSetup> forResultGetters(

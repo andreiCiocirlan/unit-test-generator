@@ -30,7 +30,7 @@ public class DefaultTestPlanner implements TestPlanner {
     public DefaultTestPlanner(DefaultValueResolver valueResolver) {
         this.valueResolver = valueResolver;
         this.testDataAssembler = new TestDataAssembler(valueResolver);
-        this.mockSetupAssembler = new MockSetupAssembler();
+        this.mockSetupAssembler = new MockSetupAssembler(valueResolver);
     }
 
     // -----------------------------------------------------------------
@@ -561,6 +561,7 @@ public class DefaultTestPlanner implements TestPlanner {
             return new ExpectedOutcome(OutcomeKind.VOID, "");
         }
 
+        // Optional path — unchanged.
         for (MethodCallModel call : method.methodCalls()) {
             if (TypeValueSupport.isOptionalOrElseThrow(method, call)) {
                 return new ExpectedOutcome(
@@ -573,26 +574,29 @@ public class DefaultTestPlanner implements TestPlanner {
         if (!method.returns().isEmpty()) {
 
             ReturnModel returnModel = method.returns().getLast();
+            String expr = returnModel.expression().trim();
 
-            // If the return expression is a dependency call, the mock was
-            // stubbed with a type-appropriate default; assert against that
-            // literal rather than re-invoking the mock.
+            // Direct-return-of-local: check identity.
+            boolean returnsLocal = method.assignments().stream()
+                    .anyMatch(a -> a.variableName().equals(expr));
+
+            // Dependency-call return: unchanged.
             for (MethodCallModel call : method.methodCalls()) {
                 if (call.kind() != CallKind.DEPENDENCY) continue;
-
                 String needle = call.target() + "." + call.methodName() + "(";
-                if (returnModel.expression().contains(needle)) {
+                if (expr.contains(needle)) {
                     return new ExpectedOutcome(
                             OutcomeKind.RETURN_VALUE,
-                            TypeValueSupport.defaultValueFor(method.returnType())
+                            TypeValueSupport.defaultValueFor(method.returnType()),
+                            false
                     );
                 }
             }
 
-            // Non-dependency return (e.g. a field, a computed value).
             return new ExpectedOutcome(
                     OutcomeKind.RETURN_VALUE,
-                    returnModel.expression()
+                    expr,
+                    returnsLocal
             );
         }
 

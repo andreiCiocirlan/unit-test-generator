@@ -429,6 +429,15 @@ public class TestDataAssembler {
         }
 
         if (expression.contains(".")) {
+            // Prefer a real instance when possible.
+            if (valueResolver.isInstantiableNoArg(type)) {
+                return "new " + TypeValueSupport.simpleName(type) + "()";
+            }
+            if (valueResolver.isInstantiableAllArgs(type)) {
+                String allArgs = valueResolver.allArgsConstructorInitializer(type);
+                if (allArgs != null) return allArgs;
+            }
+            // Fall back to a mock.
             return "mock(" + TypeValueSupport.eraseGenerics(type) + ".class)";
         }
 

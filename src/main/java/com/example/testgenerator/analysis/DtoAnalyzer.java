@@ -63,6 +63,10 @@ public class DtoAnalyzer {
             boolean hasBuilder = decl.getAnnotations().stream()
                     .anyMatch(a -> a.getNameAsString().equals("Builder"));
 
+            boolean isInterface = decl.isInterface();
+            boolean isAbstract = decl.getModifiers().stream()
+                    .anyMatch(m -> m.getKeyword() == Modifier.Keyword.ABSTRACT);
+
             List<FieldModel> fields = new ArrayList<>();
             for (FieldDeclaration field : decl.getFields()) {
                 if (field.hasModifier(Modifier.Keyword.STATIC)) continue;
@@ -74,6 +78,17 @@ public class DtoAnalyzer {
                 }
             }
 
+            boolean hasNoArgConstructor = decl.getConstructors().stream()
+                    .anyMatch(c -> c.getParameters().isEmpty());
+
+            // If no constructor is declared at all, Java provides a default no-arg one.
+            if (decl.getConstructors().isEmpty()) {
+                hasNoArgConstructor = true;
+            }
+
+            boolean hasAllArgsConstructor = decl.getConstructors().stream()
+                    .anyMatch(c -> c.getParameters().size() == fields.size());
+
             String pkg = cu.getPackageDeclaration()
                     .map(p -> p.getNameAsString())
                     .orElse("");
@@ -82,8 +97,15 @@ public class DtoAnalyzer {
                     ? decl.getNameAsString()
                     : pkg + "." + decl.getNameAsString();
 
-            return Optional.of(new DtoModel(qualified, hasBuilder, fields));
-
+            return Optional.of(new DtoModel(
+                    qualified,
+                    hasBuilder,
+                    fields,
+                    isInterface,
+                    isAbstract,
+                    hasNoArgConstructor,
+                    hasAllArgsConstructor
+            ));
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -93,6 +115,21 @@ public class DtoAnalyzer {
             String typeName,
             Path sourceRoot,
             List<String> imports) {
+
+        if (typeName == null || typeName.isBlank()) {
+            return null;
+        }
+
+        // Generic, array, wildcard, and primitive types are not class names
+        // we can resolve to a source file.
+        if (typeName.contains("<")
+            || typeName.contains(">")
+            || typeName.contains("[")
+            || typeName.contains("]")
+            || typeName.contains("?")
+            || isPrimitiveOrVoid(typeName)) {
+            return null;
+        }
 
         // 1. Fully qualified: com.example.notification.NotificationRequest
         if (typeName.contains(".")) {
@@ -133,6 +170,14 @@ public class DtoAnalyzer {
 
         // 5. Cached walk as last resort
         return walkFor(typeName, sourceRoot);
+    }
+
+    private boolean isPrimitiveOrVoid(String type) {
+        return switch (type) {
+            case "int", "long", "short", "byte",
+                 "double", "float", "boolean", "char", "void" -> true;
+            default -> false;
+        };
     }
 
     private Path walkFor(String typeName, Path sourceRoot) {

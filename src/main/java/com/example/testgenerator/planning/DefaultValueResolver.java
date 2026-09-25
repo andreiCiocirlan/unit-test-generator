@@ -24,6 +24,57 @@ public class DefaultValueResolver {
         this.imports = imports == null ? List.of() : imports;
     }
 
+    /** True if the type is concrete and instantiable with `new Type()`. */
+    public boolean isInstantiableNoArg(String type) {
+        if (sourceRoot == null) return false;
+        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
+        if (dto.isEmpty()) return false;
+        var d = dto.get();
+        return !d.isInterface() && !d.isAbstract() && d.hasNoArgConstructor();
+    }
+
+    /** True if the type has an all-args constructor (value-object style). */
+    public boolean isInstantiableAllArgs(String type) {
+        if (sourceRoot == null) return false;
+        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
+        if (dto.isEmpty()) return false;
+        var d = dto.get();
+        return !d.isInterface() && !d.isAbstract()
+               && d.hasAllArgsConstructor()
+               && !d.fields().isEmpty();
+    }
+
+    /**
+     * If the type has an all-args constructor, return `new Type(v1, v2, ...)`
+     * with defaults for each parameter. Otherwise return null.
+     */
+    public String allArgsConstructorInitializer(String type) {
+        if (sourceRoot == null) return null;
+        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
+        if (dto.isEmpty()) return null;
+        var d = dto.get();
+        if (d.isInterface() || d.isAbstract() || !d.hasAllArgsConstructor()) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder("new ")
+                .append(simpleNameOf(type))
+                .append("(");
+        for (int i = 0; i < d.fields().size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(valueFor(d.fields().get(i).type()));
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
+    private String simpleNameOf(String type) {
+        int lt = type.indexOf('<');
+        String noGenerics = lt < 0 ? type : type.substring(0, lt);
+        int dot = noGenerics.lastIndexOf('.');
+        return dot < 0 ? noGenerics : noGenerics.substring(dot + 1);
+    }
+
     /** Existing single-arg entry point: no field overrides. */
     public String valueFor(String type) {
         return valueFor(type, Map.of());

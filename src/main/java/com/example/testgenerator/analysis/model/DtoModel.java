@@ -5,5 +5,9 @@ import java.util.List;
 public record DtoModel(
         String qualifiedName,
         boolean hasBuilder,
-        List<FieldModel> fields
+        List<FieldModel> fields,
+        boolean isInterface,
+        boolean isAbstract,
+        boolean hasNoArgConstructor,
+        boolean hasAllArgsConstructor
 ) {}

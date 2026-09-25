@@ -1,5 +1,6 @@
 package com.example.testgenerator.planning;
 
+import com.example.testgenerator.analysis.DtoAnalyzer;
 import com.example.testgenerator.analysis.model.*;
 import com.example.testgenerator.planning.model.MockAction;
 import com.example.testgenerator.planning.model.MockSetup;
@@ -12,7 +13,7 @@ import static com.example.testgenerator.planning.Fixtures.*;
 
 class MockSetupAssemblerTest {
 
-    private final MockSetupAssembler assembler = new MockSetupAssembler();
+    private final MockSetupAssembler assembler = new MockSetupAssembler(new DefaultValueResolver(new DtoAnalyzer()));
 
     @Test
     void forDependencyCall_returns_stub_and_verify_when_result_is_assigned() {
