@@ -68,8 +68,19 @@ public final class TypeValueSupport {
     }
 
     public static String defaultValueFor(String type) {
-        if (type != null && type.startsWith("Optional<")) {
+        if (type == null) return "null";
+
+        if (type.startsWith("Optional<")) {
             return "java.util.Optional.empty()";
+        }
+        if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
+            return "java.util.List.of()";
+        }
+        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
+            return "java.util.Set.of()";
+        }
+        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
+            return "java.util.Map.of()";
         }
         return switch (type) {
             case "String" -> "\"test@example.com\"";
