@@ -68,12 +68,19 @@ public class DefaultTestPlanner implements TestPlanner {
 
         List<TestScenario> scenarios = new ArrayList<>();
 
-        // 1. Guard clauses
+        // 1. Throwing guard clauses
         for (ConditionModel condition : method.conditions()) {
             if (!isGuardClause(condition)) continue;
             for (String exceptionType : condition.thrownExceptions()) {
                 scenarios.add(guardClauseScenario(method, condition, exceptionType));
             }
+        }
+
+        // 1b. Returning guard clauses
+        for (ConditionModel condition : method.conditions()) {
+            ReturnModel guardReturn = returnGuardFor(method, condition);
+            if (guardReturn == null) continue;
+            scenarios.add(returnGuardScenario(method, condition, guardReturn));
         }
 
         // 2. Try/catch scenarios
@@ -83,7 +90,7 @@ public class DefaultTestPlanner implements TestPlanner {
             }
         }
 
-        // 3. Branch scenarios (narrow).
+        // 3. Branch scenarios
         List<BranchModel> branchModels = branchAnalyzer.analyze(method);
 
         if (branchModels.isEmpty()) {
@@ -95,6 +102,77 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         return scenarios;
+    }
+
+    /**
+     * If the given condition is an early-return guard — `if (x == null)
+     * return <expr>;` at the top level of the method — return the return
+     * statement. Otherwise null.
+     */
+    private ReturnModel returnGuardFor(
+            MethodModel method,
+            ConditionModel condition) {
+
+        if (!condition.thrownExceptions().isEmpty()) return null;   // throwing guard, not ours
+
+        // Only simple null checks for now.
+        String expr = condition.expression().trim();
+        if (!expr.matches("[A-Za-z_][A-Za-z0-9_]*\\s*==\\s*null")) {
+            return null;
+        }
+
+        // Top-level only.
+        if (condition.context() != null
+            && (condition.context().tryDepth() > 0
+                || condition.context().insideCatch())) {
+            return null;
+        }
+
+        // Find the return whose context includes this condition.
+        for (ReturnModel r : method.returns()) {
+            if (r.context() == null) continue;
+            for (String ifCond : r.context().ifConditions()) {
+                if (ifCond.equals(condition.expression())) {
+                    return r;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A scenario for an early-return guard:
+     *   if (x == null) return false;
+     * Set x to null and assert the returned value.
+     */
+    private TestScenario returnGuardScenario(
+            MethodModel method,
+            ConditionModel condition,
+            ReturnModel guardReturn) {
+
+        String paramName = condition.expression().trim()
+                .split("\\s*==\\s*")[0].trim();
+
+        String displayName = method.name()
+                             + "_should_return_"
+                             + guardReturn.expression()
+                             + "_when_"
+                             + paramName
+                             + "_is_null";
+
+        return new TestScenario(
+                method.name(),
+                displayName,
+                method.returnType(),
+                method.declaredThrows(),
+                method.parameters(),
+                testDataAssembler.assemble(method, condition),   // <-- condition!
+                List.of(),                                        // <-- no stubs
+                new ExpectedOutcome(
+                        OutcomeKind.RETURN_VALUE,
+                        guardReturn.expression()
+                )
+        );
     }
 
     private String guardDisplayName(

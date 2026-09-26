@@ -16,29 +16,14 @@ public class BranchAnalyzer {
 
         List<BranchModel> branches = new ArrayList<>();
 
-        // 1. Early-return null guards
-        for (ConditionModel condition : method.conditions()) {
-            ReturnModel ret = findReturnInCondition(method, condition);
-            if (ret == null) continue;
-            if (!isSimpleNullCheck(condition.expression())) continue;
-
-            branches.add(new BranchModel(
-                    method.name(),
-                    method.name() + "_should_return_when_"
-                    + shortName(condition.expression()),
-                    List.of(),
-                    new BranchOutcome(BranchOutcomeKind.RETURN, ret.expression(), List.of())
-            ));
-        }
-
-        // 2. If/else-if/else chain (the method body after the guards)
+        // 1. If/else-if/else chain (the method body after the guards)
         List<BranchModel> chain = chainScenarios(method);
         if (!chain.isEmpty()) {
             branches.addAll(chain);
             return branches;
         }
 
-        // 3. Body-return decomposition
+        // 2. Body-return decomposition
         if (!method.returns().isEmpty()) {
             ReturnModel bodyReturn = method.returns().getLast();
             boolean topLevel = bodyReturn.context() == null
@@ -371,23 +356,6 @@ public class BranchAnalyzer {
         }
 
         return pairs;
-    }
-
-    private boolean isSimpleNullCheck(String expr) {
-        return expr.matches("[A-Za-z_][A-Za-z0-9_]*\\s*==\\s*null");
-    }
-
-    private ReturnModel findReturnInCondition(
-            MethodModel method,
-            ConditionModel condition) {
-
-        for (ReturnModel r : method.returns()) {
-            if (r.context() == null) continue;
-            for (String ifCond : r.context().ifConditions()) {
-                if (ifCond.equals(condition.expression())) return r;
-            }
-        }
-        return null;
     }
 
     private String shortName(String expr) {
