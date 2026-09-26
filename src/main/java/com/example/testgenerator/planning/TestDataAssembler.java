@@ -373,9 +373,6 @@ public class TestDataAssembler {
                 .map(ConditionModel::expression)
                 .forEach(referenced::add);
 
-        // NEW: assignment expressions — because one assignment may reference
-        // another local (e.g. `notification = pending.get(i)` references
-        // `pending`), and the reorder pass relies on both being present.
         method.assignments().stream()
                 .map(AssignmentModel::expression)
                 .forEach(referenced::add);
@@ -385,6 +382,7 @@ public class TestDataAssembler {
                 .filter(a ->
                         TypeValueSupport.isPrimitiveType(a.variableType())
                         || TypeValueSupport.isWellKnownImmutable(a.variableType())
+                        || TypeValueSupport.isCollectionType(a.variableType())
                         || referenced.stream().anyMatch(expr ->
                                 Pattern.compile("\\b" + Pattern.quote(a.variableName()) + "\\b")
                                         .matcher(expr).find()))
