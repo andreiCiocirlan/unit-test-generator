@@ -16,7 +16,7 @@ public class BranchAnalyzer {
 
         List<BranchModel> branches = new ArrayList<>();
 
-        // 1. If/else-if/else chain (the method body after the guards)
+        // 1. If/else-if/else chain (top-level)
         List<BranchModel> chain = chainScenarios(method);
         if (!chain.isEmpty()) {
             branches.addAll(chain);
@@ -28,13 +28,82 @@ public class BranchAnalyzer {
             ReturnModel bodyReturn = method.returns().getLast();
             boolean topLevel = bodyReturn.context() == null
                                || bodyReturn.context().ifConditions().isEmpty();
-
             if (topLevel) {
                 branches.addAll(branchesForReturn(method, bodyReturn));
             }
         }
 
+        // 3. Loop-body branches: for each condition inside a foreach,
+        //    produce one BranchModel that makes the condition true.
+        branches.addAll(loopBodyBranches(method));
+
         return branches;
+    }
+
+    private List<BranchModel> loopBodyBranches(MethodModel method) {
+
+        List<BranchModel> branches = new ArrayList<>();
+
+        for (ConditionModel condition : method.conditions()) {
+
+            // Only conditions inside a loop body.
+            if (condition.context() == null) continue;
+            if (condition.context().loopDepth() == 0) continue;
+
+            // Find which foreach loop encloses this condition.
+            ForEachModel loop = enclosingForEach(condition, method);
+            if (loop == null) continue;
+
+            // Build the "true" stubs from the condition.
+            List<BranchSetup> trueSetups = stubsForConditionTrue(
+                    condition.expression(), method);
+
+            if (trueSetups == null) continue;
+
+            branches.add(new BranchModel(
+                    method.name(),
+                    method.name() + "_loop_body_runs",
+                    trueSetups,
+                    new BranchOutcome(
+                            BranchOutcomeKind.RETURN,
+                            null,          // no assertion
+                            List.of()
+                    )
+            ));
+        }
+
+        return branches;
+    }
+
+    private ForEachModel enclosingForEach(
+            ConditionModel condition,
+            MethodModel method) {
+
+        List<String> conditionIfs = condition.context().ifConditions();
+
+        for (ForEachModel fe : method.forEaches()) {
+            if (fe.context() == null) continue;
+
+            List<String> foreachIfs = fe.context().ifConditions();
+
+            // The foreach must be at the same enclosing-if level as the
+            // condition (or an outer level). Simplest check: the foreach's
+            // enclosing-ifs is a prefix of the condition's.
+            if (conditionIfs.size() < foreachIfs.size()) continue;
+            if (!conditionIfs.subList(0, foreachIfs.size()).equals(foreachIfs)) {
+                continue;
+            }
+
+            // Loop depth must be consistent: the condition is at least as
+            // deep as the foreach.
+            if (condition.context().loopDepth() < fe.context().loopDepth()) {
+                continue;
+            }
+
+            return fe;
+        }
+
+        return null;
     }
 
     /**

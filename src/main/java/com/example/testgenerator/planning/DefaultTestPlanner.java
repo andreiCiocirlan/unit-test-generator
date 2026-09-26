@@ -93,13 +93,11 @@ public class DefaultTestPlanner implements TestPlanner {
         // 3. Branch scenarios
         List<BranchModel> branchModels = branchAnalyzer.analyze(method);
 
-        if (branchModels.isEmpty()) {
-            scenarios.add(happyPathScenario(method));
-        } else {
-            for (BranchModel branch : branchModels) {
-                scenarios.add(branchModelToScenario(method, branch));
-            }
+        for (BranchModel branch : branchModels) {
+            scenarios.add(branchModelToScenario(method, branch));
         }
+
+        scenarios.add(happyPathScenario(method));
 
         return scenarios;
     }
@@ -736,8 +734,28 @@ public class DefaultTestPlanner implements TestPlanner {
 
         // Build the setups list for the test.
         List<MockSetup> setups = new ArrayList<>();
+
+        // Same baseline as the happy path: neutralize guards, stub result
+        // getters, stub dependency calls.
         setups.addAll(guardNeutralizingSetupsForHappyPath(method));
 
+        Set<String> guardKeys = method.conditions().stream()
+                .filter(this::isGuardClause)
+                .flatMap(c -> c.methodCalls().stream())
+                .map(mockSetupAssembler::callKey)
+                .collect(Collectors.toSet());
+
+        setups.addAll(mockSetupAssembler.forResultGetters(method, guardKeys));
+
+        for (MethodCallModel call : method.methodCalls()) {
+            if (call.context() != null && call.context().insideCatch()) continue;
+            if (call.kind() != CallKind.DEPENDENCY) continue;
+            if (guardKeys.contains(mockSetupAssembler.callKey(call))) continue;
+
+            setups.addAll(mockSetupAssembler.forDependencyCall(call, method));
+        }
+
+        // Branch-specific stubs on top.
         for (BranchSetup bs : branch.setups()) {
             setups.add(new MockSetup(
                     bs.target(),
@@ -754,6 +772,15 @@ public class DefaultTestPlanner implements TestPlanner {
             outcome = new ExpectedOutcome(
                     OutcomeKind.THROW_EXCEPTION,
                     branch.outcome().value(),
+                    false,
+                    branch.outcome().stateAssertions()
+            );
+        } else if (branch.outcome().value() == null) {
+            // Branch outcome without a specific value (e.g. loop-body branches
+            // that only exercise the code path). Call the method, no assertion.
+            outcome = new ExpectedOutcome(
+                    OutcomeKind.VOID,
+                    "",
                     false,
                     branch.outcome().stateAssertions()
             );

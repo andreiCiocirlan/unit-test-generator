@@ -131,19 +131,46 @@ public class ConditionStubResolver {
 
         // x.getY().compareTo(CONST) OP LITERAL
         if (cmp.left() instanceof ExprModel.Call call
-                && call.method().equals("compareTo")) {
+            && call.method().equals("compareTo")) {
 
             ExprModel receiver = parseReceiver(call.receiver());
-            if (receiver instanceof ExprModel.Call inner) {
-                String target = simpleReceiver(inner.receiver());
-                if (target == null) return null;
+            if (!(receiver instanceof ExprModel.Call inner)) return null;
 
-                String op = cmp.operator();
-                String value = numericValueFor(op, truthValue);
-                if (value == null) return null;
+            String target = simpleReceiver(inner.receiver());
+            if (target == null) return null;
 
-                return List.of(new BranchSetup(target, inner.method(), value));
+            String op = cmp.operator();
+            String value = numericValueFor(op, truthValue);
+            if (value == null) return null;
+
+            List<BranchSetup> setups = new ArrayList<>();
+            setups.add(new BranchSetup(target, inner.method(), value));
+
+            // Also stub the argument to compareTo if it's a getter on a
+            // mock. E.g. properties.getMinimumInvoiceAmount().
+            if (call.args().size() == 1) {
+                ExprModel argExpr;
+                try {
+                    argExpr = new ExpressionParser().parse(call.args().get(0));
+                } catch (Exception e) {
+                    argExpr = null;
+                }
+                if (argExpr instanceof ExprModel.Call argCall) {
+                    String argTarget = simpleReceiver(argCall.receiver());
+                    if (argTarget != null && argCall.args().isEmpty()) {
+                        // Stub the argument's getter to a fixed baseline value.
+                        // We don't know its type, so use BigDecimal.ZERO as a
+                        // type-neutral default for numeric comparisons.
+                        setups.add(new BranchSetup(
+                                argTarget,
+                                argCall.method(),
+                                "java.math.BigDecimal.ZERO"
+                        ));
+                    }
+                }
             }
+
+            return setups;
         }
 
         return null;
