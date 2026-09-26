@@ -18,7 +18,8 @@ public final class TypeValueSupport {
             case "String", "Long", "Integer", "int", "long",
                  "Double", "double", "Float", "float",
                  "Boolean", "boolean", "Short", "short",
-                 "Byte", "byte", "Character", "char" -> true;
+                 "Byte", "byte", "Character", "char",
+                 "BigDecimal", "java.math.BigDecimal" -> true;
             default -> false;
         };
     }
@@ -92,6 +93,7 @@ public final class TypeValueSupport {
             case "Short", "short" -> "(short) 1";
             case "Byte", "byte" -> "(byte) 1";
             case "Character", "char" -> "'a'";
+            case "BigDecimal", "java.math.BigDecimal" -> "java.math.BigDecimal.ZERO";
             default -> "null";
         };
     }
