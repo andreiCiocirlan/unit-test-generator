@@ -38,15 +38,34 @@ public class MockSetupAssembler {
             MethodModel method) {
         List<MockSetup> setups = new ArrayList<>();
 
-        // Always verify dependency calls in the happy path.
-        MockSetup verifySetup = new MockSetup(
-                call.target(),
-                call.targetType(),
-                call.methodName(),
-                normalizeArguments(call.arguments(), method),
-                MockAction.VERIFY,
-                ""
-        );
+        boolean insideLoopConditional =
+                call.context() != null
+                && call.context().loopDepth() > 0
+                && !call.context().ifConditions().isEmpty();
+
+        // RETURN setup (if any) — always emitted when the result is used.
+        setups.addAll(returnSetupsFor(call, method));
+
+        // VERIFY setup — skipped inside loop-body conditionals.
+        if (!insideLoopConditional) {
+            setups.add(new MockSetup(
+                    call.target(),
+                    call.targetType(),
+                    call.methodName(),
+                    normalizeArguments(call.arguments(), method),
+                    MockAction.VERIFY,
+                    ""
+            ));
+        }
+
+        return setups;
+    }
+
+    private List<MockSetup> returnSetupsFor(
+            MethodCallModel call,
+            MethodModel method) {
+
+        List<MockSetup> setups = new ArrayList<>();
 
         if (TypeValueSupport.isOptionalOrElseThrow(method, call)) {
             setups.add(new MockSetup(
@@ -59,7 +78,6 @@ public class MockSetupAssembler {
                     + TypeValueSupport.expectedVariableName(method)
                     + ")"
             ));
-            setups.add(verifySetup);
             return setups;
         }
 
@@ -74,7 +92,6 @@ public class MockSetupAssembler {
                     MockAction.RETURN,
                     value
             ));
-            setups.add(verifySetup);
             return setups;
         }
 
@@ -85,14 +102,10 @@ public class MockSetupAssembler {
                     call.methodName(),
                     normalizeArguments(call.arguments(), method),
                     MockAction.RETURN,
-                    resolveReturnValue(method.returnType())
+                    TypeValueSupport.defaultValueFor(method.returnType())
             ));
-            setups.add(verifySetup);
-            return setups;
         }
 
-        // Pure side-effect call: verify only.
-        setups.add(verifySetup);
         return setups;
     }
 
