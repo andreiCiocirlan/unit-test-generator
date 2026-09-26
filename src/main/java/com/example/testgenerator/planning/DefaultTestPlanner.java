@@ -576,9 +576,21 @@ public class DefaultTestPlanner implements TestPlanner {
             ReturnModel returnModel = method.returns().getLast();
             String expr = returnModel.expression().trim();
 
-            // Direct-return-of-local: check identity.
+            // Is the return expression exactly a local variable name?
             boolean returnsLocal = method.assignments().stream()
                     .anyMatch(a -> a.variableName().equals(expr));
+
+            // If so, was that local assigned from a dependency call?
+            // Only then is `isSameAs` appropriate. A local assigned from a
+            // computed expression (e.g. BigDecimal.ZERO, a ternary, a switch)
+            // is not identity-equal to the return value.
+            boolean fromDependencyCall = returnsLocal
+                                         && method.assignments().stream()
+                                                 .filter(a -> a.variableName().equals(expr))
+                                                 .anyMatch(a -> method.methodCalls().stream()
+                                                         .anyMatch(c -> c.kind() == CallKind.DEPENDENCY
+                                                                        && a.expression().contains(
+                                                                 c.target() + "." + c.methodName() + "(")));
 
             // Dependency-call return: unchanged.
             for (MethodCallModel call : method.methodCalls()) {
@@ -596,7 +608,7 @@ public class DefaultTestPlanner implements TestPlanner {
             return new ExpectedOutcome(
                     OutcomeKind.RETURN_VALUE,
                     expr,
-                    returnsLocal
+                    fromDependencyCall
             );
         }
 
