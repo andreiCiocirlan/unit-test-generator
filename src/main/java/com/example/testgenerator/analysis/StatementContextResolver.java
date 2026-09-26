@@ -1,14 +1,9 @@
 package com.example.testgenerator.analysis;
 
 import com.example.testgenerator.analysis.model.StatementContext;
+import com.example.testgenerator.analysis.model.StatementContext.BranchPosition;
 import com.github.javaparser.ast.Node;
-import com.github.javaparser.ast.stmt.CatchClause;
-import com.github.javaparser.ast.stmt.DoStmt;
-import com.github.javaparser.ast.stmt.ForEachStmt;
-import com.github.javaparser.ast.stmt.ForStmt;
-import com.github.javaparser.ast.stmt.IfStmt;
-import com.github.javaparser.ast.stmt.TryStmt;
-import com.github.javaparser.ast.stmt.WhileStmt;
+import com.github.javaparser.ast.stmt.*;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -18,10 +13,6 @@ import java.util.List;
 @Component
 public class StatementContextResolver {
 
-    /**
-     * Build a StatementContext for the given node by walking its ancestor
-     * chain up to (but not including) the enclosing MethodDeclaration.
-     */
     public StatementContext resolve(Node node) {
 
         List<String> ifConditions = new ArrayList<>();
@@ -29,8 +20,8 @@ public class StatementContextResolver {
         int loopDepth = 0;
         boolean insideCatch = false;
         String caughtExceptionType = "";
+        BranchPosition branchPosition = BranchPosition.NONE;
 
-        // Collect ancestors innermost-first, then reverse for outermost-first.
         List<Node> ancestors = new ArrayList<>();
         Node current = node.getParentNode().orElse(null);
         while (current != null) {
@@ -39,10 +30,13 @@ public class StatementContextResolver {
         }
         Collections.reverse(ancestors);
 
+        IfStmt nearestIf = null;
+
         for (Node ancestor : ancestors) {
 
             if (ancestor instanceof IfStmt ifStmt) {
                 ifConditions.add(ifStmt.getCondition().toString());
+                nearestIf = ifStmt;    // overwrite — later = innermost
                 continue;
             }
 
@@ -53,10 +47,7 @@ public class StatementContextResolver {
 
             if (ancestor instanceof CatchClause catchClause) {
                 insideCatch = true;
-                caughtExceptionType = catchClause
-                        .getParameter()
-                        .getType()
-                        .asString();
+                caughtExceptionType = catchClause.getParameter().getType().asString();
                 continue;
             }
 
@@ -68,12 +59,53 @@ public class StatementContextResolver {
             }
         }
 
+        if (nearestIf != null) {
+            branchPosition = positionInIf(node, nearestIf);
+        }
+
         return new StatementContext(
                 List.copyOf(ifConditions),
                 tryDepth,
                 loopDepth,
                 insideCatch,
-                caughtExceptionType
+                caughtExceptionType,
+                branchPosition
         );
+    }
+
+    /**
+     * Determine whether `node` sits in the then-block or the else-block
+     * of `ifStmt`. The else-block may itself be another IfStmt (an
+     * else-if); in that case we report ELSE_IF.
+     */
+    private BranchPosition positionInIf(Node node, IfStmt ifStmt) {
+
+        // Find the topmost descendant-of-ifStmt ancestor of `node`.
+        Node child = node;
+        Node parent = node.getParentNode().orElse(null);
+        while (parent != null && parent != ifStmt) {
+            child = parent;
+            parent = parent.getParentNode().orElse(null);
+        }
+        if (parent != ifStmt) {
+            return BranchPosition.NONE;
+        }
+
+        // Now `child` is the direct child of ifStmt that contains `node`.
+        if (child == ifStmt.getThenStmt()) {
+            return BranchPosition.THEN;
+        }
+
+        if (ifStmt.getElseStmt().isPresent()) {
+            Node elseStmt = ifStmt.getElseStmt().get();
+            if (child == elseStmt) {
+                if (elseStmt instanceof IfStmt) {
+                    return BranchPosition.ELSE_IF;
+                }
+                return BranchPosition.ELSE;
+            }
+        }
+
+        return BranchPosition.NONE;
     }
 }

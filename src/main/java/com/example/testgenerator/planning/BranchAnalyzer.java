@@ -16,7 +16,7 @@ public class BranchAnalyzer {
 
         List<BranchModel> branches = new ArrayList<>();
 
-        // 1. Early-return guards: `if (x == null) return <expr>;`
+        // 1. Early-return null guards
         for (ConditionModel condition : method.conditions()) {
             ReturnModel ret = findReturnInCondition(method, condition);
             if (ret == null) continue;
@@ -25,17 +25,24 @@ public class BranchAnalyzer {
             branches.add(new BranchModel(
                     method.name(),
                     method.name() + "_should_return_when_"
-                            + shortName(condition.expression()),
+                    + shortName(condition.expression()),
                     List.of(),
                     new BranchOutcome(BranchOutcomeKind.RETURN, ret.expression(), List.of())
             ));
         }
 
-        // 2. Body-return branches: the last return, if top-level.
+        // 2. If/else-if/else chain (the method body after the guards)
+        List<BranchModel> chain = chainScenarios(method);
+        if (!chain.isEmpty()) {
+            branches.addAll(chain);
+            return branches;
+        }
+
+        // 3. Body-return decomposition
         if (!method.returns().isEmpty()) {
             ReturnModel bodyReturn = method.returns().getLast();
             boolean topLevel = bodyReturn.context() == null
-                    || bodyReturn.context().ifConditions().isEmpty();
+                               || bodyReturn.context().ifConditions().isEmpty();
 
             if (topLevel) {
                 branches.addAll(branchesForReturn(method, bodyReturn));
@@ -43,6 +50,181 @@ public class BranchAnalyzer {
         }
 
         return branches;
+    }
+
+    /**
+     * If the method's body is a chain of if / else-if / else that all
+     * return, produce one BranchModel per segment. Otherwise return empty.
+     *
+     * A "chain" here means: two or more returns, all at the top level
+     * (same tryDepth and insideCatch), whose enclosing if-conditions
+     * form a prefix-nested chain like:
+     *
+     *     if (A) return x;
+     *     else if (B) return y;
+     *     else return z;
+     *
+     * The returns' contexts are:
+     *     x -> ifConditions = [A],                          position=THEN
+     *     y -> ifConditions = [A, B],                       position=THEN
+     *     z -> ifConditions = [A, B],                       position=ELSE
+     */
+    private List<BranchModel> chainScenarios(MethodModel method) {
+
+        // Only consider top-level returns (not inside try/catch/loops).
+        List<ReturnModel> topLevelReturns = method.returns().stream()
+                .filter(r -> r.context() == null
+                             || (r.context().tryDepth() == 0
+                                 && !r.context().insideCatch()))
+                .toList();
+
+        if (topLevelReturns.size() < 2) return List.of();
+
+        // Every top-level return must have at least one if-condition in
+        // context — otherwise it's the method's unconditional fallthrough
+        // return and doesn't participate in the chain.
+        boolean anyWithoutIf = topLevelReturns.stream()
+                .anyMatch(r -> r.context() == null
+                               || r.context().ifConditions().isEmpty());
+
+        if (anyWithoutIf) return List.of();
+
+        // Every return's branch position must be THEN or ELSE — not ELSE_IF,
+        // because ELSE_IF returns belong to the nested if, and their own
+        // return statement is inside that nested if's then-block. Wait —
+        // in a chain like `if (A) ... else if (B) ... else ...`, the
+        // return for B sits inside B's then-block, but B's if-statement
+        // is itself the else of A. From B's return's point of view, its
+        // nearest IfStmt is B, and B is inside A's else. So positionInIf
+        // for B's return reports THEN (relative to B). That's correct.
+        //
+        // So we accept any position; the conditions in context determine
+        // the branch.
+        List<BranchModel> branches = new ArrayList<>();
+
+        for (ReturnModel r : topLevelReturns) {
+
+            List<String> conditions = r.context() == null
+                    ? List.of()
+                    : r.context().ifConditions();
+
+            if (conditions.isEmpty()) continue;
+
+            // The "current" branch condition is the last one in the
+            // innermost-first chain (JavaParser's ifConditions is
+            // outermost-first, so the last element is the innermost).
+            String currentCondition = conditions.get(conditions.size() - 1);
+
+            // Is this return inside the ELSE of its nearest if?
+            boolean isElseBranch = r.context() != null
+                                   && r.context().branchPosition()
+                                      == com.example.testgenerator.analysis.model.StatementContext.BranchPosition.ELSE;
+
+            List<BranchSetup> setups;
+            String displaySuffix;
+
+            if (isElseBranch) {
+                // The else-branch fires when all previous conditions are
+                // false. We produce stubs that fail every condition in the
+                // chain. For the shapes we handle (string equals + null
+                // checks), a single stub value can usually fail all of them.
+                setups = stubsForAllConditionsFalse(conditions, method);
+                displaySuffix = "else_branch";
+            } else {
+                // The then-branch fires when its own condition is true.
+                setups = stubsForConditionTrue(currentCondition, method);
+                displaySuffix = shortName(currentCondition);
+            }
+
+            if (setups == null) continue;
+
+            branches.add(new BranchModel(
+                    method.name(),
+                    method.name() + "_should_return_when_" + displaySuffix,
+                    setups,
+                    new BranchOutcome(
+                            BranchOutcomeKind.RETURN,
+                            r.expression(),
+                            List.of()
+                    )
+            ));
+        }
+
+        return branches;
+    }
+
+    /**
+     * Stubs that satisfy the given condition (make it true).
+     */
+    private List<BranchSetup> stubsForConditionTrue(
+            String condition,
+            MethodModel method) {
+
+        try {
+            ExprModel expr = exprParser.parse(condition);
+            return stubResolver.resolve(expr, true);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Stubs that make every condition in the chain false. The order of
+     * `conditions` is outermost-first, so the innermost is last.
+     *
+     * For a chain like [A, B, C] where all are `"LITERAL".equals(x.getY())`
+     * or `x.getY() == null`, a single stub value that is none of the
+     * literals and isn't null works. We compute it here from the set of
+     * literals.
+     */
+    private List<BranchSetup> stubsForAllConditionsFalse(
+            List<String> conditions,
+            MethodModel method) {
+
+        // Collect the target.getter and the set of literals from every
+        // `"LITERAL".equals(target.getter())` condition.
+        String target = null;
+        String getter = null;
+        java.util.Set<String> literals = new java.util.LinkedHashSet<>();
+        boolean hasNullCheck = false;
+
+        for (String c : conditions) {
+            java.util.regex.Matcher eq = java.util.regex.Pattern.compile(
+                    "^\"([^\"]*)\"\\.equals\\(([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\)$"
+            ).matcher(c.trim());
+            if (eq.find()) {
+                target = eq.group(2);
+                getter = eq.group(3);
+                literals.add(eq.group(1));
+                continue;
+            }
+
+            java.util.regex.Matcher nn = java.util.regex.Pattern.compile(
+                    "^([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\s*==\\s*null$"
+            ).matcher(c.trim());
+            if (nn.find()) {
+                target = nn.group(1);
+                getter = nn.group(2);
+                hasNullCheck = true;
+                continue;
+            }
+
+            // Shape we don't understand — can't produce a stub.
+            return null;
+        }
+
+        if (target == null || getter == null) return null;
+
+        // Pick a value not in the set of literals, and non-null (so the
+        // null check is also false).
+        String value = "\"__other__\"";
+        int counter = 0;
+        while (literals.contains(value.replace("\"", ""))) {
+            counter++;
+            value = "\"__other" + counter + "__\"";
+        }
+
+        return List.of(new BranchSetup(target, getter, value));
     }
 
     private List<BranchModel> branchesForReturn(

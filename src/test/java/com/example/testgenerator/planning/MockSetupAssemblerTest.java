@@ -131,7 +131,7 @@ class MockSetupAssemblerTest {
         MethodCallModel deliver = call("deliveryClient", "deliver", CallKind.DEPENDENCY);
         StatementContext insideIf = new StatementContext(
                 List.of("!receipt.isAccepted()"),
-                0, 0, false, ""
+                0, 0, false, "", StatementContext.BranchPosition.NONE
         );
         MethodCallModel getMessageId = call(
                 "receipt", "getMessageId", CallKind.LOCAL, insideIf
