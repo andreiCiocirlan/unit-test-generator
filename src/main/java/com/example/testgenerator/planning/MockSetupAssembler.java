@@ -52,7 +52,7 @@ public class MockSetupAssembler {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    matcherArguments(call.arguments(), method),
                     MockAction.VERIFY,
                     ""
             ));
@@ -72,7 +72,7 @@ public class MockSetupAssembler {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     "java.util.Optional.of("
                     + TypeValueSupport.expectedVariableName(method)
@@ -88,7 +88,7 @@ public class MockSetupAssembler {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     value
             ));
@@ -100,7 +100,7 @@ public class MockSetupAssembler {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     TypeValueSupport.defaultValueFor(method.returnType())
             ));
@@ -179,7 +179,7 @@ public class MockSetupAssembler {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    normalizeArguments(call.arguments(), method),
+                    matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     value
             ));
@@ -223,25 +223,13 @@ public class MockSetupAssembler {
         return assigned || returned;
     }
 
-    public List<String> normalizeArguments(
+    public List<String> matcherArguments(
             List<String> arguments,
             MethodModel method) {
 
         return arguments.stream()
-                .map(a -> normalizeMockArgument(a, method))
+                .map(a -> toMatcher(a, method))
                 .toList();
-    }
-
-    private String normalizeMockArgument(
-            String argument,
-            MethodModel method) {
-
-        return method.assignments().stream()
-                .filter(a -> a.variableName().equals(argument))
-                .filter(a -> a.expression().startsWith("new "))
-                .map(a -> "any(" + a.variableType() + ".class)")
-                .findFirst()
-                .orElse(argument);
     }
 
     private String declaredTypeOf(String variableName, MethodModel method) {
@@ -252,4 +240,43 @@ public class MockSetupAssembler {
                 .orElse("");
     }
 
+    /**
+     * Convert a raw argument expression into its Mockito matcher form.
+     *
+     *   - parameter with a known test value -> eq(expr)
+     *   - literal -> eq(expr)
+     *   - anything else -> any()
+     */
+    private String toMatcher(String argument, MethodModel method) {
+
+        String a = argument.trim();
+
+        // Literals
+        if (a.equals("null")
+            || a.equals("true")
+            || a.equals("false")
+            || a.matches("-?\\d+[LlFfDd]?")
+            || a.matches("-?\\d+\\.\\d+[FfDd]?")
+            || (a.startsWith("\"") && a.endsWith("\""))) {
+            return "eq(" + a + ")";
+        }
+
+        // Bare parameter name
+        boolean isParameter = method.parameters().stream()
+                .anyMatch(p -> p.name().equals(a));
+        if (isParameter) {
+            return "eq(" + a + ")";
+        }
+
+        // Bare local variable name (declared in the test's Given block)
+        boolean isLocal = method.assignments().stream()
+                .anyMatch(assign -> assign.variableName().equals(a));
+        if (isLocal) {
+            return "eq(" + a + ")";
+        }
+
+        // Anything else — a getter call, a nested expression — depends on
+        // service state, so use any().
+        return "any()";
+    }
 }

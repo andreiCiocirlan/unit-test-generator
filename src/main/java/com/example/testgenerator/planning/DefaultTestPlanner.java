@@ -169,7 +169,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     guardStubValueFor(call, condition.expression())
             ));
@@ -301,7 +301,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     throwingCall.target(),
                     throwingCall.targetType(),
                     throwingCall.methodName(),
-                    mockSetupAssembler.normalizeArguments(throwingCall.arguments(), method),
+                    mockSetupAssembler.matcherArguments(throwingCall.arguments(), method),
                     MockAction.THROW,
                     catchModel.exceptionType()
             ));
@@ -316,7 +316,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.matcherArguments(call.arguments(), method),
                     MockAction.VERIFY,
                     ""
             ));
@@ -331,7 +331,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.matcherArguments(call.arguments(), method),
                     MockAction.VERIFY,
                     ""
             ));
@@ -412,7 +412,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     call.target(),
                     call.targetType(),
                     call.methodName(),
-                    mockSetupAssembler.normalizeArguments(call.arguments(), method),
+                    mockSetupAssembler.matcherArguments(call.arguments(), method),
                     MockAction.RETURN,
                     value
             ));
@@ -457,7 +457,7 @@ public class DefaultTestPlanner implements TestPlanner {
                     firstDependency.target(),
                     firstDependency.targetType(),
                     firstDependency.methodName(),
-                    mockSetupAssembler.normalizeArguments(firstDependency.arguments(), method),
+                    mockSetupAssembler.matcherArguments(firstDependency.arguments(), method),
                     MockAction.RETURN,
                     stub
             ));
@@ -549,7 +549,7 @@ public class DefaultTestPlanner implements TestPlanner {
                         call.target(),
                         call.targetType(),
                         call.methodName(),
-                        mockSetupAssembler.normalizeArguments(call.arguments(), method),
+                        mockSetupAssembler.matcherArguments(call.arguments(), method),
                         MockAction.RETURN,
                         stub
                 ));
