@@ -65,33 +65,30 @@ public class DefaultTestPlanner implements TestPlanner {
 
         List<TestScenario> scenarios = new ArrayList<>();
 
-        // 1. Guard clauses: top-level ifs that throw and are NOT inside a try.
-        //    One scenario per thrown exception.
+        // 1. Guard clauses
         for (ConditionModel condition : method.conditions()) {
-
-            if (!isGuardClause(condition)) {
-                continue;
-            }
-
+            if (!isGuardClause(condition)) continue;
             for (String exceptionType : condition.thrownExceptions()) {
-                scenarios.add(
-                        guardClauseScenario(method, condition, exceptionType)
-                );
+                scenarios.add(guardClauseScenario(method, condition, exceptionType));
             }
         }
 
-        // 2. Try/catch scenarios: one per catch clause.
+        // 2. Try/catch scenarios
         for (TryModel tryModel : method.tries()) {
             for (CatchModel catchModel : tryModel.catches()) {
-                scenarios.add(
-                        catchScenario(method, tryModel, catchModel)
-                );
+                scenarios.add(catchScenario(method, tryModel, catchModel));
             }
         }
 
-        // 3. Happy path scenario. If there are no guard clauses and no
-        //    try/catch, this is just a basic scenario.
-        scenarios.add(happyPathScenario(method));
+        // 3. Branch scenarios (narrow).
+        List<TestScenario> branchScenarios = branchScenariosFor(method);
+
+        if (branchScenarios.isEmpty()) {
+            // No branch shapes recognized — emit the happy path only.
+            scenarios.add(happyPathScenario(method));
+        } else {
+            scenarios.addAll(branchScenarios);
+        }
 
         return scenarios;
     }
@@ -642,4 +639,359 @@ public class DefaultTestPlanner implements TestPlanner {
         return new ExpectedOutcome(OutcomeKind.VOID, "");
     }
 
+    // -----------------------------------------------------------------
+    // Branch scenarios (narrow, shape-based)
+    // -----------------------------------------------------------------
+
+    /**
+     * Produces branch scenarios for methods whose shape matches one of the
+     * small set we currently recognize. Returns an empty list for anything
+     * else, so the caller can fall back to the happy-path-only behavior.
+     */
+    private List<TestScenario> branchScenariosFor(MethodModel method) {
+
+        List<TestScenario> scenarios = new ArrayList<>();
+
+        // Shape A: leading `if (x == null) return <literal>;`
+        scenarios.addAll(nullGuardScenarios(method));
+
+        // Shape B: `return <a> && <b>;` — but only if the method has no
+        // other returns and no try/catch (otherwise B doesn't describe it).
+        // Use the LAST return as the method's body return. This is the one
+        // at the end of the method, after any guard clauses.
+        if (!method.returns().isEmpty() && method.tries().isEmpty()) {
+
+            ReturnModel bodyReturn = method.returns().getLast();
+
+            boolean bodyReturnIsTopLevel =
+                    bodyReturn.context() == null
+                    || bodyReturn.context().ifConditions().isEmpty();
+
+            if (bodyReturnIsTopLevel) {
+                scenarios.addAll(conjunctionReturnScenarios(method, bodyReturn));
+            }
+        }
+
+        // Shape C: `return <comparison>;`
+        if (!method.returns().isEmpty() && method.tries().isEmpty()
+            && method.conditions().isEmpty()) {
+
+            ReturnModel bodyReturn = method.returns().getLast();
+
+            boolean bodyReturnIsTopLevel =
+                    bodyReturn.context() == null
+                    || bodyReturn.context().ifConditions().isEmpty();
+
+            if (bodyReturnIsTopLevel) {
+                scenarios.addAll(singleComparisonScenarios(method, bodyReturn));
+            }
+        }
+
+        return scenarios;
+    }
+
+    /**
+     * Produce stubs that make the given condition evaluate to true, or
+     * null if we don't know how.
+     */
+    private List<MockSetup> stubForConditionTrue(String condition, MethodModel method) {
+        return stubForCondition(condition, method, true);
+    }
+
+    private List<MockSetup> stubForConditionFalse(String condition, MethodModel method) {
+        return stubForCondition(condition, method, false);
+    }
+
+    private List<MockSetup> stubForCondition(
+            String condition,
+            MethodModel method,
+            boolean truthValue) {
+
+        String c = condition.trim();
+
+        // "LITERAL".equals(x.getY())
+        java.util.regex.Matcher equalsMatcher = Pattern.compile(
+                "^\"([^\"]*)\"\\.equals\\(([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\)$"
+        ).matcher(c);
+        if (equalsMatcher.find()) {
+            String literal = equalsMatcher.group(1);
+            String target = equalsMatcher.group(2);
+            String getter = equalsMatcher.group(3);
+            String value = truthValue ? "\"" + literal + "\"" : "\"__other__\"";
+            return List.of(new MockSetup(
+                    target, "", getter,
+                    List.of(),
+                    MockAction.RETURN,
+                    value
+            ));
+        }
+
+        // x.getY().compareTo(ZERO) > 0
+        java.util.regex.Matcher cmpMatcher = Pattern.compile(
+                "^([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\.compareTo\\(([^)]+)\\)\\s*(>|<|>=|<=|==|!=)\\s*(.+)$"
+        ).matcher(c);
+        if (cmpMatcher.find()) {
+            String target = cmpMatcher.group(1);
+            String getter = cmpMatcher.group(2);
+            String operator = cmpMatcher.group(4);
+            // For our purposes, we only handle > and < on numeric-ish types.
+            // Produce BigDecimal.ONE for `> 0` true, and BigDecimal.ZERO for
+            // `> 0` false, etc.
+            String value = chooseComparisonValue(operator, truthValue);
+            if (value == null) return null;
+            return List.of(new MockSetup(
+                    target, "", getter,
+                    List.of(),
+                    MockAction.RETURN,
+                    value
+            ));
+        }
+
+        // x.getY() != null
+        java.util.regex.Matcher notNullMatcher = Pattern.compile(
+                "^([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\s*!=\\s*null$"
+        ).matcher(c);
+        if (notNullMatcher.find()) {
+            String target = notNullMatcher.group(1);
+            String getter = notNullMatcher.group(2);
+            String value = truthValue ? "mock(Object.class)" : "null";
+            return List.of(new MockSetup(
+                    target, "", getter, List.of(), MockAction.RETURN, value
+            ));
+        }
+
+        return null;
+    }
+
+    private String chooseComparisonValue(String operator, boolean truthValue) {
+        // We don't have the field type here, so we guess. For BigDecimal
+        // and Integer comparisons this works:
+        //   `> 0`  true  -> BigDecimal.ONE
+        //   `> 0`  false -> BigDecimal.ZERO
+        //   `>= 0` true  -> BigDecimal.ZERO
+        //   `>= 0` false -> BigDecimal.valueOf(-1)
+        // Extend as needed for other types.
+        return switch (operator) {
+            case ">"  -> truthValue ? "java.math.BigDecimal.ONE"
+                    : "java.math.BigDecimal.ZERO";
+            case ">=" -> truthValue ? "java.math.BigDecimal.ZERO"
+                    : "java.math.BigDecimal.valueOf(-1)";
+            case "<"  -> truthValue ? "java.math.BigDecimal.valueOf(-1)"
+                    : "java.math.BigDecimal.ONE";
+            case "<=" -> truthValue ? "java.math.BigDecimal.ZERO"
+                    : "java.math.BigDecimal.ONE";
+            default   -> null;
+        };
+    }
+
+    private List<TestScenario> singleComparisonScenarios(MethodModel method, ReturnModel bodyReturn) {
+
+        List<TestScenario> scenarios = new ArrayList<>();
+
+        String expr = bodyReturn.expression().trim();
+
+        // Skip conjunction/disjunction — those belong to shape B.
+        if (expr.contains("&&") || expr.contains("||")) return scenarios;
+
+        List<MockSetup> trueSetups = stubForConditionTrue(expr, method);
+        List<MockSetup> falseSetups = stubForConditionFalse(expr, method);
+        if (trueSetups == null || falseSetups == null) return scenarios;
+
+        scenarios.add(new TestScenario(
+                method.name(),
+                method.name() + "_should_return_true",
+                method.returnType(),
+                method.declaredThrows(),
+                method.parameters(),
+                happyPathTestData(method),
+                prependHappySetup(method, trueSetups),
+                new ExpectedOutcome(OutcomeKind.RETURN_VALUE, "true")
+        ));
+
+        scenarios.add(new TestScenario(
+                method.name(),
+                method.name() + "_should_return_false",
+                method.returnType(),
+                method.declaredThrows(),
+                method.parameters(),
+                happyPathTestData(method),
+                prependHappySetup(method, falseSetups),
+                new ExpectedOutcome(OutcomeKind.RETURN_VALUE, "false")
+        ));
+
+        return scenarios;
+    }
+
+    private List<TestData> happyPathTestData(MethodModel method) {
+        return testDataAssembler.assemble(method, null);
+    }
+
+    private List<MockSetup> prependHappySetup(
+            MethodModel method,
+            List<MockSetup> branchSetups) {
+
+        List<MockSetup> all = new ArrayList<>();
+        all.addAll(guardNeutralizingSetupsForHappyPath(method));
+        all.addAll(branchSetups);
+        return all;
+    }
+
+    private List<TestScenario> conjunctionReturnScenarios(MethodModel method, ReturnModel bodyReturn) {
+
+        List<TestScenario> scenarios = new ArrayList<>();
+
+        String expr = bodyReturn.expression().trim();
+
+        if (!expr.contains("&&")) return scenarios;
+
+        String[] parts = splitTopLevelAnd(expr);
+        if (parts.length != 2) return scenarios;
+
+        String left = parts[0].trim();
+        String right = parts[1].trim();
+
+        // Scenario 1: left is false → result false.
+        List<MockSetup> leftFalseSetups = stubForConditionFalse(left, method);
+        if (leftFalseSetups != null) {
+            scenarios.add(new TestScenario(
+                    method.name(),
+                    method.name() + "_should_return_false_when_"
+                    + shortName(left) + "_is_false",
+                    method.returnType(),
+                    method.declaredThrows(),
+                    method.parameters(),
+                    happyPathTestData(method),
+                    prependHappySetup(method, leftFalseSetups),
+                    new ExpectedOutcome(OutcomeKind.RETURN_VALUE, "false")
+            ));
+        }
+
+        // Scenario 2: left true, right true → result true.
+        List<MockSetup> leftTrueSetups = stubForConditionTrue(left, method);
+        List<MockSetup> rightTrueSetups = stubForConditionTrue(right, method);
+
+        if (leftTrueSetups != null && rightTrueSetups != null) {
+            List<MockSetup> both = new ArrayList<>(leftTrueSetups);
+            both.addAll(rightTrueSetups);
+
+            scenarios.add(new TestScenario(
+                    method.name(),
+                    method.name() + "_should_return_true_when_both_conjuncts_hold",
+                    method.returnType(),
+                    method.declaredThrows(),
+                    method.parameters(),
+                    happyPathTestData(method),
+                    prependHappySetup(method, both),
+                    new ExpectedOutcome(OutcomeKind.RETURN_VALUE, "true")
+            ));
+        }
+
+        // Scenario 3: left true, right false → result false.
+        if (leftTrueSetups != null) {
+            List<MockSetup> rightFalseSetups = stubForConditionFalse(right, method);
+            if (rightFalseSetups != null) {
+                List<MockSetup> both = new ArrayList<>(leftTrueSetups);
+                both.addAll(rightFalseSetups);
+
+                scenarios.add(new TestScenario(
+                        method.name(),
+                        method.name() + "_should_return_false_when_"
+                        + shortName(right) + "_is_false",
+                        method.returnType(),
+                        method.declaredThrows(),
+                        method.parameters(),
+                        happyPathTestData(method),
+                        prependHappySetup(method, both),
+                        new ExpectedOutcome(OutcomeKind.RETURN_VALUE, "false")
+                ));
+            }
+        }
+
+        return scenarios;
+    }
+
+    private String[] splitTopLevelAnd(String expr) {
+        // Naive split — fine for the shapes we handle (no nested && inside
+        // parens). Replace with a proper top-level splitter if needed.
+        int idx = expr.indexOf("&&");
+        if (idx < 0) return new String[0];
+        return new String[]{
+                expr.substring(0, idx),
+                expr.substring(idx + 2)
+        };
+    }
+
+    private String shortName(String expr) {
+        String s = expr.replaceAll("[^A-Za-z0-9]+", "_")
+                .replaceAll("^_|_$", "");
+        return s.length() > 30 ? s.substring(0, 30) : s;
+    }
+
+    private List<TestScenario> nullGuardScenarios(MethodModel method) {
+
+        List<TestScenario> scenarios = new ArrayList<>();
+
+        for (ConditionModel condition : method.conditions()) {
+
+            String expr = condition.expression().trim();
+
+            // Only `x == null` for now.
+            if (!expr.matches("[A-Za-z_][A-Za-z0-9_]*\\s*==\\s*null")) {
+                continue;
+            }
+
+            String paramName = expr.split("\\s*==\\s*")[0].trim();
+
+            // Find the parameter.
+            ParameterModel param = method.parameters().stream()
+                    .filter(p -> p.name().equals(paramName))
+                    .findFirst()
+                    .orElse(null);
+            if (param == null) continue;
+
+            // The guard must throw or return. We handle the return case.
+            // Find a ReturnStmt in this condition's context.
+            ReturnModel guardReturn = findReturnInCondition(method, condition);
+            if (guardReturn == null) continue;
+
+            // Scenario 1: x is null, so the guard fires.
+            scenarios.add(new TestScenario(
+                    method.name(),
+                    method.name() + "_should_return_guard_value_when_"
+                    + paramName + "_is_null",
+                    method.returnType(),
+                    method.declaredThrows(),
+                    method.parameters(),
+                    List.of(new TestData(paramName, param.type(), "null")),
+                    List.of(),  // no stubs needed
+                    new ExpectedOutcome(
+                            OutcomeKind.RETURN_VALUE,
+                            guardReturn.expression()
+                    )
+            ));
+
+            // The non-null scenario is covered by the conjunction scenarios
+            // (for isOverdue) or by the happy path. Don't emit it here.
+        }
+
+        return scenarios;
+    }
+
+    private ReturnModel findReturnInCondition(
+            MethodModel method,
+            ConditionModel condition) {
+
+        // The return's StatementContext must be inside exactly this condition.
+        // Heuristic: match by the condition's expression appearing in the
+        // return's ifConditions.
+        for (ReturnModel r : method.returns()) {
+            if (r.context() == null) continue;
+            for (String ifCond : r.context().ifConditions()) {
+                if (ifCond.equals(condition.expression())) {
+                    return r;
+                }
+            }
+        }
+        return null;
+    }
 }
