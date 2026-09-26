@@ -28,6 +28,7 @@ class MockSetupAssemblerTest {
                 List.of(call),
                 List.of(assign("saved", "Notification", "repository.save(entity)")),
                 List.of(ret("saved")),
+                List.of(),
                 List.of()
         );
 
@@ -55,6 +56,7 @@ class MockSetupAssemblerTest {
                 List.of(call),
                 List.of(),
                 List.of(),
+                List.of(),
                 List.of()
         );
 
@@ -80,6 +82,7 @@ class MockSetupAssemblerTest {
                 List.of(call),
                 List.of(),
                 List.of(ret("repository.findById(id).orElseThrow()")),
+                List.of(),
                 List.of()
         );
 
@@ -109,6 +112,7 @@ class MockSetupAssemblerTest {
                 List.of(deliver, isAccepted),
                 List.of(assign("receipt", "DeliveryReceipt",
                         "deliveryClient.deliver(recipient, body)")),
+                List.of(),
                 List.of(),
                 List.of()
         );
@@ -144,6 +148,7 @@ class MockSetupAssemblerTest {
                 List.of(deliver, getMessageId),
                 List.of(assign("receipt", "DeliveryReceipt",
                         "deliveryClient.deliver()")),
+                List.of(),
                 List.of(),
                 List.of()
         );

@@ -86,6 +86,26 @@ public class TestDataAssembler {
             ));
         }
 
+        for (ForEachModel fe : method.forEaches()) {
+            // Only declare the element if its collection is declared (i.e. the
+            // collection is a required assignment) — otherwise we're declaring
+            // a variable nothing uses.
+            boolean collectionDeclared = testData.stream()
+                    .anyMatch(td -> td.variableName().equals(fe.collectionName()));
+            if (!collectionDeclared) continue;
+
+            // Skip if already declared (indexed-loop element).
+            boolean alreadyDeclared = testData.stream()
+                    .anyMatch(td -> td.variableName().equals(fe.elementName()));
+            if (alreadyDeclared) continue;
+
+            testData.add(new TestData(
+                    fe.elementName(),
+                    fe.elementType(),
+                    "mock(" + TypeValueSupport.eraseGenerics(fe.elementType()) + ".class)"
+            ));
+        }
+
         return reorderByDependency(testData);
     }
 
@@ -449,17 +469,22 @@ public class TestDataAssembler {
      *   <elementType> <name> = <collectionName>.get(...);
      * Returns null if no such assignment exists.
      */
-    private String elementVariableNameFor(
-            String collectionName,
-            MethodModel method) {
-
+    private String elementVariableNameFor(String collectionName, MethodModel method) {
+        // Indexed: `Type x = collection.get(i)`.
         String needle = collectionName + ".get(";
-
         for (AssignmentModel a : method.assignments()) {
             if (a.expression().contains(needle)) {
                 return a.variableName();
             }
         }
+
+        // Foreach: `for (Type x : collection)`.
+        for (ForEachModel fe : method.forEaches()) {
+            if (fe.collectionName().equals(collectionName)) {
+                return fe.elementName();
+            }
+        }
+
         return null;
     }
 
@@ -467,25 +492,23 @@ public class TestDataAssembler {
      * True if the collection variable is read in a way that implies
      * iteration: size(), get(...), forEach(...), stream(), iterator().
      */
-    private boolean isIterated(
-            AssignmentModel assignment,
-            MethodModel method) {
-
+    private boolean isIterated(AssignmentModel assignment, MethodModel method) {
         String varName = assignment.variableName();
 
+        // Indexed loop or .get/.size/.forEach on the collection.
         for (MethodCallModel call : method.methodCalls()) {
             if (!varName.equals(call.target())) continue;
-
             String m = call.methodName();
-            if (m.equals("get")
-                || m.equals("size")
-                || m.equals("forEach")
-                || m.equals("stream")
+            if (m.equals("get") || m.equals("size")
+                || m.equals("forEach") || m.equals("stream")
                 || m.equals("iterator")) {
                 return true;
             }
         }
-        return false;
+
+        // Foreach over the collection.
+        return method.forEaches().stream()
+                .anyMatch(fe -> fe.collectionName().equals(varName));
     }
 
     private String parameterInitializer(ParameterModel parameter) {

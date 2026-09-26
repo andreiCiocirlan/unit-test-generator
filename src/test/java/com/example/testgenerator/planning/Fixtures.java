@@ -47,7 +47,7 @@ public final class Fixtures {
             String returnType,
             List<ParameterModel> parameters,
             List<MethodCallModel> calls) {
-        return method(name, returnType, parameters, calls, List.of(), List.of(), List.of());
+        return method(name, returnType, parameters, calls, List.of(), List.of(), List.of(), List.of());
     }
 
     public static MethodModel method(
@@ -57,7 +57,8 @@ public final class Fixtures {
             List<MethodCallModel> calls,
             List<AssignmentModel> assignments,
             List<ReturnModel> returns,
-            List<ConditionModel> conditions) {
+            List<ConditionModel> conditions,
+            List<ForEachModel> forEaches) {
         return new MethodModel(
                 name,
                 returnType,
@@ -69,8 +70,8 @@ public final class Fixtures {
                 List.of(),
                 returns,
                 assignments,
-                List.of()
-        );
+                List.of(),
+                forEaches);
     }
 
     public static AssignmentModel assign(
@@ -111,7 +112,8 @@ public final class Fixtures {
                 List.of(),
                 List.of(),
                 List.of(),
-                conditions
+                conditions,
+                List.of()
         );
     }
 }

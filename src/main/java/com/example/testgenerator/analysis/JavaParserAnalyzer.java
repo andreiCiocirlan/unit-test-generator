@@ -6,6 +6,7 @@ import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.stmt.*;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Component
 public class JavaParserAnalyzer implements com.example.testgenerator.analysis.model.JavaAnalyzer {
@@ -205,6 +207,24 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
                         p.getNameAsString()))
                 .toList();
 
+        List<ForEachModel> forEaches = method.findAll(ForEachStmt.class).stream()
+                .map(fe -> {
+                    Expression iterable = fe.getIterable();
+                    if (!iterable.isNameExpr()) return null;
+                    String collectionName = iterable.asNameExpr().getNameAsString();
+
+                    VariableDeclarator v = fe.getVariable()
+                            .getVariable(0);
+                    return new ForEachModel(
+                            collectionName,
+                            v.getNameAsString(),
+                            v.getTypeAsString(),
+                            contextResolver.resolve(fe)
+                    );
+                })
+                .filter(Objects::nonNull)
+                .toList();
+
         List<MethodCallModel> methodCalls = extractMethodCalls(
                 method, dependencies);
 
@@ -231,7 +251,8 @@ public class JavaParserAnalyzer implements com.example.testgenerator.analysis.mo
                 tries,
                 returns,
                 assignments,
-                throwsStatements
+                throwsStatements,
+                forEaches
         );
     }
 

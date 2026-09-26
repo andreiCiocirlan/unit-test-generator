@@ -13,5 +13,6 @@ public record MethodModel(
         List<TryModel> tries,
         List<ReturnModel> returns,
         List<AssignmentModel> assignments,
-        List<ThrowModel> throwsStatements
+        List<ThrowModel> throwsStatements,
+        List<ForEachModel> forEaches
 ) {}

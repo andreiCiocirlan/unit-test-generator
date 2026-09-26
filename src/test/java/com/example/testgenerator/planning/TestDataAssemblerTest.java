@@ -99,6 +99,7 @@ class TestDataAssemblerTest {
                 List.of(call("repository", "save", CallKind.DEPENDENCY, "entity")),
                 List.of(assign("saved", "Notification", "repository.save(entity)")),
                 List.of(ret("saved")),
+                List.of(),
                 List.of()
         );
 
@@ -130,6 +131,7 @@ class TestDataAssemblerTest {
                         assign("notification", "Notification", "pending.get(i)")
                 ),
                 List.of(),
+                List.of(),
                 List.of()
         );
 
@@ -155,6 +157,7 @@ class TestDataAssemblerTest {
                 List.of(call("repository", "findPendingByChannel", CallKind.DEPENDENCY, "channel")),
                 List.of(assign("pending", "List<Notification>", "repository.findPendingByChannel(channel)")),
                 List.of(ret("pending")),
+                List.of(),
                 List.of()
         );
 
@@ -190,6 +193,7 @@ class TestDataAssemblerTest {
                         assign("notification", "Notification", "pending.get(i)")
                 ),
                 List.of(),
+                List.of(),
                 List.of()
         );
 
@@ -224,6 +228,7 @@ class TestDataAssemblerTest {
                 List.of(call),
                 List.of(),
                 List.of(ret("repository.findById(id).orElseThrow()")),
+                List.of(),
                 List.of()
         );
 
