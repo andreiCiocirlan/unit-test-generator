@@ -268,15 +268,33 @@ public class MockSetupAssembler {
             return "eq(" + a + ")";
         }
 
-        // Bare local variable name (declared in the test's Given block)
+        // Bare local variable name (declared in the test's Given block).
+        // Only use eq(local) when the local is bound to a dependency-call
+        // result — those are the instances the test and the service share
+        // via stubs. Locals constructed independently (e.g. `new User(email)`)
+        // refer to different objects in the test and in the service, so
+        // eq(...) would not match; use any() instead.
         boolean isLocal = method.assignments().stream()
                 .anyMatch(assign -> assign.variableName().equals(a));
         if (isLocal) {
-            return "eq(" + a + ")";
+            boolean boundToDependency = isBoundToDependencyCall(a, method);
+            return boundToDependency ? "eq(" + a + ")" : "any()";
         }
 
         // Anything else — a getter call, a nested expression — depends on
         // service state, so use any().
         return "any()";
+    }
+
+    private boolean isBoundToDependencyCall(
+            String localName,
+            MethodModel method) {
+
+        return method.assignments().stream()
+                .filter(assign -> assign.variableName().equals(localName))
+                .anyMatch(assign -> method.methodCalls().stream()
+                        .anyMatch(c -> c.kind() == CallKind.DEPENDENCY
+                                       && assign.expression().contains(
+                                c.target() + "." + c.methodName() + "(")));
     }
 }
