@@ -576,14 +576,22 @@ public class DefaultTestPlanner implements TestPlanner {
             ReturnModel returnModel = method.returns().getLast();
             String expr = returnModel.expression().trim();
 
+            // If the last return lives inside an if/else-if/else branch,
+            // we can't know it fires without symbolic execution. Skip the
+            // assertion rather than risk asserting a value that never
+            // executes at runtime.
+            if (returnModel.context() != null
+                && !returnModel.context().ifConditions().isEmpty()
+                && returnModel.context().tryDepth() == 0) {
+                return new ExpectedOutcome(OutcomeKind.VOID, "");
+            }
+
             // Is the return expression exactly a local variable name?
             boolean returnsLocal = method.assignments().stream()
                     .anyMatch(a -> a.variableName().equals(expr));
 
             // If so, was that local assigned from a dependency call?
-            // Only then is `isSameAs` appropriate. A local assigned from a
-            // computed expression (e.g. BigDecimal.ZERO, a ternary, a switch)
-            // is not identity-equal to the return value.
+            // Only then is `isSameAs` appropriate.
             boolean fromDependencyCall = returnsLocal
                                          && method.assignments().stream()
                                                  .filter(a -> a.variableName().equals(expr))
@@ -592,7 +600,7 @@ public class DefaultTestPlanner implements TestPlanner {
                                                                         && a.expression().contains(
                                                                  c.target() + "." + c.methodName() + "(")));
 
-            // Dependency-call return: unchanged.
+            // Dependency-call return: use the type-appropriate default.
             for (MethodCallModel call : method.methodCalls()) {
                 if (call.kind() != CallKind.DEPENDENCY) continue;
                 String needle = call.target() + "." + call.methodName() + "(";
