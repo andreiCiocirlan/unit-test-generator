@@ -265,6 +265,8 @@ public class JavaTestRenderer {
                 .append(outcome.value())
                 .append(".class);\n");
 
+        renderStateAssertions(source, outcome);
+
         renderVerifications(source, scenario);
     }
 
@@ -309,10 +311,33 @@ public class JavaTestRenderer {
             source.append("        // Then\n");
         }
 
-        renderVerifications(
-                source,
-                scenario
-        );
+
+        renderStateAssertions(source, outcome);
+
+        renderVerifications(source, scenario);
+    }
+
+    private void renderStateAssertions(
+            StringBuilder source,
+            ExpectedOutcome outcome) {
+
+        if (outcome.stateAssertions() == null
+            || outcome.stateAssertions().isEmpty()) {
+            return;
+        }
+
+        source.append("\n");
+
+        for (StateAssertion a : outcome.stateAssertions()) {
+            source.append("        assertThat(")
+                    .append(a.variableName())
+                    .append(".")
+                    .append(a.getterName())
+                    .append("())\n");
+            source.append("                .isEqualTo(")
+                    .append(a.expectedValue())
+                    .append(");\n");
+        }
     }
 
     private void renderVerifications(

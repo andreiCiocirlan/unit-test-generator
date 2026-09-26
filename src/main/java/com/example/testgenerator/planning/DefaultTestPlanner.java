@@ -27,10 +27,13 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private final MockSetupAssembler mockSetupAssembler;
 
+    private final StateAssertionCollector stateAssertionCollector;
+
     public DefaultTestPlanner(DefaultValueResolver valueResolver) {
         this.valueResolver = valueResolver;
         this.testDataAssembler = new TestDataAssembler(valueResolver);
         this.mockSetupAssembler = new MockSetupAssembler(valueResolver);
+        this.stateAssertionCollector = new StateAssertionCollector();
     }
 
     // -----------------------------------------------------------------
@@ -333,6 +336,8 @@ public class DefaultTestPlanner implements TestPlanner {
             ));
         }
 
+        List<StateAssertion> assertions = stateAssertionCollector.collectFrom(catchModel.methodCalls());
+
         ExpectedOutcome outcome;
         if (!catchModel.throwsStatements().isEmpty()) {
             ThrowModel t = catchModel.throwsStatements().get(0);
@@ -341,7 +346,13 @@ public class DefaultTestPlanner implements TestPlanner {
                     t.exceptionType()
             );
         } else {
-            outcome = createNormalExpectedOutcome(method);
+            ExpectedOutcome base = createNormalExpectedOutcome(method);
+            outcome = new ExpectedOutcome(
+                    base.kind(),
+                    base.value(),
+                    base.identityExpected(),
+                    assertions
+            );
         }
 
         String displayName = method.name()
@@ -492,6 +503,14 @@ public class DefaultTestPlanner implements TestPlanner {
             setups.addAll(mockSetupAssembler.forDependencyCall(call, method));
         }
 
+        ExpectedOutcome base = createNormalExpectedOutcome(method);
+        ExpectedOutcome outcome = new ExpectedOutcome(
+                base.kind(),
+                base.value(),
+                base.identityExpected(),
+                stateAssertionCollector.collect(method)
+        );
+
         return new TestScenario(
                 method.name(),
                 method.name() + " should execute successfully",
@@ -500,7 +519,7 @@ public class DefaultTestPlanner implements TestPlanner {
                 method.parameters(),
                 testDataAssembler.assemble(method, null),
                 setups,
-                createNormalExpectedOutcome(method)
+                outcome
         );
     }
 
