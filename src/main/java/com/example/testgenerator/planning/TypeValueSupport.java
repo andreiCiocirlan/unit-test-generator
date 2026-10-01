@@ -45,6 +45,25 @@ public final class TypeValueSupport {
                || type.equals("Map");
     }
 
+    /**
+     * Returns the default value expression for a collection type
+     * (e.g. {@code "java.util.List.of()}), or {@code null} if the type
+     * is not a recognised collection.
+     */
+    public static String collectionDefault(String type) {
+        if (type == null) return null;
+        if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
+            return "java.util.List.of()";
+        }
+        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
+            return "java.util.Set.of()";
+        }
+        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
+            return "java.util.Map.of()";
+        }
+        return null;
+    }
+
     public static String eraseGenerics(String type) {
         int idx = type.indexOf('<');
         return idx < 0 ? type : type.substring(0, idx);
@@ -74,14 +93,9 @@ public final class TypeValueSupport {
         if (type.startsWith("Optional<")) {
             return "java.util.Optional.empty()";
         }
-        if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
-            return "java.util.List.of()";
-        }
-        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
-            return "java.util.Set.of()";
-        }
-        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
-            return "java.util.Map.of()";
+        String collectionDefault = collectionDefault(type);
+        if (collectionDefault != null) {
+            return collectionDefault;
         }
         return switch (type) {
             case "String" -> "\"test@example.com\"";
