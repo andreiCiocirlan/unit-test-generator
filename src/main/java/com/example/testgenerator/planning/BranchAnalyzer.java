@@ -5,12 +5,37 @@ import com.example.testgenerator.analysis.model.*;
 import com.example.testgenerator.planning.model.*;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BranchAnalyzer {
 
     private final ExpressionParser exprParser = new ExpressionParser();
     private final ConditionStubResolver stubResolver = new ConditionStubResolver();
+
+    private static final Pattern EQUALS_LITERAL_PATTERN = Pattern.compile(
+            "^\"([^\"]*)\"\\.equals\\(([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\)$"
+    );
+    private static final Pattern NULL_CHECK_PATTERN = Pattern.compile(
+            "^([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\s*==\\s*null$"
+    );
+
+    /**
+     * Matches runs of non-alphanumeric characters, used by {@link #shortName}
+     * to replace them with underscores.
+     */
+    private static final Pattern NON_ALPHANUMERIC_PATTERN =
+            Pattern.compile("[^A-Za-z0-9]+");
+
+    /**
+     * Matches a leading or trailing underscore, used by {@link #shortName}
+     * to trim them from the result.
+     */
+    private static final Pattern LEADING_TRAILING_UNDERSCORE_PATTERN =
+            Pattern.compile("^_|_$");
 
     public List<BranchModel> analyze(MethodModel method) {
 
@@ -56,7 +81,7 @@ public class BranchAnalyzer {
 
             // Build the "true" stubs from the condition.
             List<BranchSetup> trueSetups = stubsForConditionTrue(
-                    condition.expression(), method);
+                    condition.expression());
 
             if (trueSetups == null) continue;
 
@@ -172,7 +197,7 @@ public class BranchAnalyzer {
             // Is this return inside the ELSE of its nearest if?
             boolean isElseBranch = r.context() != null
                                    && r.context().branchPosition()
-                                      == com.example.testgenerator.analysis.model.StatementContext.BranchPosition.ELSE;
+                                      == StatementContext.BranchPosition.ELSE;
 
             List<BranchSetup> setups;
             String displaySuffix;
@@ -182,11 +207,11 @@ public class BranchAnalyzer {
                 // false. We produce stubs that fail every condition in the
                 // chain. For the shapes we handle (string equals + null
                 // checks), a single stub value can usually fail all of them.
-                setups = stubsForAllConditionsFalse(conditions, method);
+                setups = stubsForAllConditionsFalse(conditions);
                 displaySuffix = "else_branch";
             } else {
                 // The then-branch fires when its own condition is true.
-                setups = stubsForConditionTrue(currentCondition, method);
+                setups = stubsForConditionTrue(currentCondition);
                 displaySuffix = shortName(currentCondition);
             }
 
@@ -211,8 +236,7 @@ public class BranchAnalyzer {
      * Stubs that satisfy the given condition (make it true).
      */
     private List<BranchSetup> stubsForConditionTrue(
-            String condition,
-            MethodModel method) {
+            String condition) {
 
         try {
             ExprModel expr = exprParser.parse(condition);
@@ -232,39 +256,22 @@ public class BranchAnalyzer {
      * literals.
      */
     private List<BranchSetup> stubsForAllConditionsFalse(
-            List<String> conditions,
-            MethodModel method) {
+            List<String> conditions) {
 
-        // Collect the target.getter and the set of literals from every
-        // `"LITERAL".equals(target.getter())` condition.
         String target = null;
         String getter = null;
-        java.util.Set<String> literals = new java.util.LinkedHashSet<>();
-        boolean hasNullCheck = false;
+        Set<String> literals = new LinkedHashSet<>();
 
         for (String c : conditions) {
-            java.util.regex.Matcher eq = java.util.regex.Pattern.compile(
-                    "^\"([^\"]*)\"\\.equals\\(([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\)$"
-            ).matcher(c.trim());
-            if (eq.find()) {
-                target = eq.group(2);
-                getter = eq.group(3);
-                literals.add(eq.group(1));
-                continue;
+            ParsedCondition parsed = parseCondition(c);
+            if (parsed == null) {
+                return null;
             }
-
-            java.util.regex.Matcher nn = java.util.regex.Pattern.compile(
-                    "^([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\(\\)\\s*==\\s*null$"
-            ).matcher(c.trim());
-            if (nn.find()) {
-                target = nn.group(1);
-                getter = nn.group(2);
-                hasNullCheck = true;
-                continue;
+            target = parsed.target();
+            getter = parsed.getter();
+            if (parsed.literal() != null) {
+                literals.add(parsed.literal());
             }
-
-            // Shape we don't understand — can't produce a stub.
-            return null;
         }
 
         if (target == null || getter == null) return null;
@@ -280,6 +287,33 @@ public class BranchAnalyzer {
 
         return List.of(new BranchSetup(target, getter, value));
     }
+
+    /**
+     * Parse a single condition string into its target, getter, and literal
+     * (if it's an equals-literal check). Returns null if the shape is
+     * not recognised.
+     */
+    private ParsedCondition parseCondition(String condition) {
+        String trimmed = condition.trim();
+
+        Matcher eq = EQUALS_LITERAL_PATTERN.matcher(trimmed);
+        if (eq.find()) {
+            return new ParsedCondition(eq.group(2), eq.group(3), eq.group(1));
+        }
+
+        Matcher nn = NULL_CHECK_PATTERN.matcher(trimmed);
+        if (nn.find()) {
+            return new ParsedCondition(nn.group(1), nn.group(2), null);
+        }
+
+        return null;
+    }
+
+    private record ParsedCondition(
+            String target,
+            String getter,
+            String literal
+    ) {}
 
     private List<BranchModel> branchesForReturn(
             MethodModel method,
@@ -428,8 +462,8 @@ public class BranchAnalyzer {
     }
 
     private String shortName(String expr) {
-        String s = expr.replaceAll("[^A-Za-z0-9]+", "_")
-                .replaceAll("^_|_$", "");
+        String s = NON_ALPHANUMERIC_PATTERN.matcher(expr).replaceAll("_");
+        s = LEADING_TRAILING_UNDERSCORE_PATTERN.matcher(s).replaceAll("");
         return s.length() > 30 ? s.substring(0, 30) : s;
     }
 }

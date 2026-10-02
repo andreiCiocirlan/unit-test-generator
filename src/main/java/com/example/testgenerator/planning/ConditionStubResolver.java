@@ -6,6 +6,7 @@ import com.example.testgenerator.analysis.model.ExprModel;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Given a condition expression and a desired truth value, produce the
@@ -13,6 +14,20 @@ import java.util.List;
  * null if we don't know how.
  */
 public class ConditionStubResolver {
+
+    private final ExpressionParser exprParser = new ExpressionParser();
+
+    private static final String BIG_DECIMAL_ONE = "java.math.BigDecimal.ONE";
+    private static final String BIG_DECIMAL_ZERO = "java.math.BigDecimal.ZERO";
+    private static final String BIG_DECIMAL_MINUS_ONE = "java.math.BigDecimal.valueOf(-1)";
+
+    /**
+     * Matches a simple Java identifier (e.g. {@code invoice}), used to
+     * determine whether a receiver is a bare variable name rather than
+     * a chained call like {@code invoice.getX()}.
+     */
+    private static final Pattern SIMPLE_IDENTIFIER_PATTERN =
+            Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     public List<BranchSetup> resolve(ExprModel expr, boolean truthValue) {
 
@@ -57,7 +72,7 @@ public class ConditionStubResolver {
 
         if (expr instanceof ExprModel.Call call) {
 
-            // NEW: "LITERAL".equals(x.getY())
+            // "LITERAL".equals(x.getY())
             if (call.method().equals("equals")
                     && call.receiver().startsWith("\"")
                     && call.args().size() == 1) {
@@ -67,7 +82,7 @@ public class ConditionStubResolver {
 
                 ExprModel arg;
                 try {
-                    arg = new ExpressionParser().parse(call.args().get(0));
+                    arg = exprParser.parse(call.args().get(0));
                 } catch (Exception e) {
                     return null;
                 }
@@ -111,8 +126,9 @@ public class ConditionStubResolver {
 
         // x.getY() == null  or  x.getY() != null
         if (cmp.operator().equals("==") || cmp.operator().equals("!=")) {
-            ExprModel callSide = cmp.left() instanceof ExprModel.Call ? cmp.left() : cmp.right();
-            ExprModel other = cmp.left() instanceof ExprModel.Call ? cmp.right() : cmp.left();
+            boolean leftIsCall = cmp.left() instanceof ExprModel.Call;
+            ExprModel callSide = leftIsCall ? cmp.left() : cmp.right();
+            ExprModel other = leftIsCall ? cmp.right() : cmp.left();
 
             if (!(callSide instanceof ExprModel.Call c)) return null;
             if (!(other instanceof ExprModel.Other o)) return null;
@@ -125,7 +141,7 @@ public class ConditionStubResolver {
             return List.of(new BranchSetup(
                     receiver,
                     c.method(),
-                    wantNull ? "null" : "java.math.BigDecimal.ONE"
+                    wantNull ? "null" : BIG_DECIMAL_ONE
             ));
         }
 
@@ -151,7 +167,7 @@ public class ConditionStubResolver {
             if (call.args().size() == 1) {
                 ExprModel argExpr;
                 try {
-                    argExpr = new ExpressionParser().parse(call.args().get(0));
+                    argExpr = exprParser.parse(call.args().get(0));
                 } catch (Exception e) {
                     argExpr = null;
                 }
@@ -164,7 +180,7 @@ public class ConditionStubResolver {
                         setups.add(new BranchSetup(
                                 argTarget,
                                 argCall.method(),
-                                "java.math.BigDecimal.ZERO"
+                                BIG_DECIMAL_ZERO
                         ));
                     }
                 }
@@ -178,14 +194,14 @@ public class ConditionStubResolver {
 
     private String numericValueFor(String op, boolean truthValue) {
         return switch (op) {
-            case ">"  -> truthValue ? "java.math.BigDecimal.ONE"
-                    : "java.math.BigDecimal.ZERO";
-            case ">=" -> truthValue ? "java.math.BigDecimal.ZERO"
-                    : "java.math.BigDecimal.valueOf(-1)";
-            case "<"  -> truthValue ? "java.math.BigDecimal.valueOf(-1)"
-                    : "java.math.BigDecimal.ONE";
-            case "<=" -> truthValue ? "java.math.BigDecimal.ZERO"
-                    : "java.math.BigDecimal.ONE";
+            case ">"  -> truthValue ? BIG_DECIMAL_ONE
+                    : BIG_DECIMAL_ZERO;
+            case ">=" -> truthValue ? BIG_DECIMAL_ZERO
+                    : BIG_DECIMAL_MINUS_ONE;
+            case "<"  -> truthValue ? BIG_DECIMAL_MINUS_ONE
+                    : BIG_DECIMAL_ONE;
+            case "<=" -> truthValue ? BIG_DECIMAL_ZERO
+                    : BIG_DECIMAL_ONE;
             default -> null;
         };
     }
@@ -193,13 +209,13 @@ public class ConditionStubResolver {
     /** "invoice" -> "invoice"; "invoice.getX()" -> null */
     private String simpleReceiver(String receiver) {
         if (receiver == null || receiver.isBlank()) return null;
-        if (receiver.matches("[A-Za-z_][A-Za-z0-9_]*")) return receiver;
+        if (SIMPLE_IDENTIFIER_PATTERN.matcher(receiver).matches()) return receiver;
         return null;
     }
 
     private ExprModel parseReceiver(String receiver) {
         try {
-            return new ExpressionParser().parse(receiver);
+            return exprParser.parse(receiver);
         } catch (Exception e) {
             return new ExprModel.Other(receiver);
         }

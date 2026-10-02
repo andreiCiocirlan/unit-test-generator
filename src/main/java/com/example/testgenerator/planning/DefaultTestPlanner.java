@@ -31,6 +31,30 @@ public class DefaultTestPlanner implements TestPlanner {
 
     private final BranchAnalyzer branchAnalyzer;
 
+    private static final Pattern NEGATION_PREFIX_PATTERN =
+            Pattern.compile("!\\s*\\(?\\s*$");
+
+    /**
+     * Matches a simple top-level null check such as {@code x == null}
+     * or {@code x==null}. Used to identify return-guard conditions.
+     */
+    private static final Pattern NULL_CHECK_PATTERN =
+            Pattern.compile("[A-Za-z_][A-Za-z0-9_]*\\s*==\\s*null");
+
+    /**
+     * Splits a null-check condition (e.g. {@code x == null}) on the
+     * equality operator to extract the left-hand operand (the parameter name).
+     */
+    private static final Pattern NULL_CHECK_SPLIT_PATTERN =
+            Pattern.compile("\\s*==\\s*");
+
+    /**
+     * Matches runs of whitespace, used to normalize condition expressions
+     * for display purposes.
+     */
+    private static final Pattern WHITESPACE_PATTERN =
+            Pattern.compile("\\s+");
+
     public DefaultTestPlanner(DefaultValueResolver valueResolver) {
         this.valueResolver = valueResolver;
         this.testDataAssembler = new TestDataAssembler(valueResolver);
@@ -115,7 +139,7 @@ public class DefaultTestPlanner implements TestPlanner {
 
         // Only simple null checks for now.
         String expr = condition.expression().trim();
-        if (!expr.matches("[A-Za-z_][A-Za-z0-9_]*\\s*==\\s*null")) {
+        if (!NULL_CHECK_PATTERN.matcher(expr).matches()) {
             return null;
         }
 
@@ -148,8 +172,8 @@ public class DefaultTestPlanner implements TestPlanner {
             ConditionModel condition,
             ReturnModel guardReturn) {
 
-        String paramName = condition.expression().trim()
-                .split("\\s*==\\s*")[0].trim();
+        String paramName = NULL_CHECK_SPLIT_PATTERN
+                .split(condition.expression().trim())[0].trim();
 
         String displayName = method.name()
                              + "_should_return_"
@@ -203,7 +227,10 @@ public class DefaultTestPlanner implements TestPlanner {
         }
 
         // 3. Fall back to the condition text.
-        String expr = condition.expression().replaceAll("\\s+", " ").trim();
+        String expr = WHITESPACE_PATTERN
+                .matcher(condition.expression())
+                .replaceAll(" ")
+                .trim();
         return expr.length() > 40 ? expr.substring(0, 40) : expr;
     }
 
@@ -311,7 +338,7 @@ public class DefaultTestPlanner implements TestPlanner {
         String prefix = expression.substring(lookbackStart, idx);
 
         // Match `!` optionally followed by whitespace or `(`.
-        return Pattern.compile("!\\s*\\(?\\s*$").matcher(prefix).find();
+        return NEGATION_PREFIX_PATTERN.matcher(prefix).find();
     }
 
     /**

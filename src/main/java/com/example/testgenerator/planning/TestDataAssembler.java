@@ -23,6 +23,26 @@ public class TestDataAssembler {
         this.valueResolver = valueResolver;
     }
 
+    /** Does `target == null` appear in the expression? */
+    private static boolean matchesNullCheck(String expr, String target) {
+        return Pattern.compile("\\Q" + target + "\\E\\s*==\\s*null")
+                .matcher(expr).find();
+    }
+
+    /** Does `name.isBlank()` or `name.isEmpty()` appear in the expression? */
+    private static boolean matchesBlankishMethodCall(String expr, String name) {
+        return Pattern.compile("\\b" + Pattern.quote(name)
+                + "\\s*\\.\\s*(isBlank|isEmpty)\\s*\\(")
+                .matcher(expr).find();
+    }
+
+    /** Does `X.isBlank(name)` or `X.isEmpty(name)` appear in the expression? */
+    private static boolean matchesBlankishWrapper(String expr, String name) {
+        return Pattern.compile("\\b(isBlank|isEmpty)\\s*\\(\\s*"
+                + Pattern.quote(name) + "\\s*\\)")
+                .matcher(expr).find();
+    }
+
     public List<TestData> assemble(
             MethodModel method,
             ConditionModel condition) {
@@ -240,13 +260,10 @@ public class TestDataAssembler {
             String getterCall = parameter.name() + ".get" + field + "()";
 
             boolean predicatesOnGetter =
-                    Pattern.compile("\\b(isBlank|isEmpty)\\s*\\(\\s*"
-                                    + Pattern.quote(getterCall) + "\\s*\\)")
-                            .matcher(expr).find()
+                    matchesBlankishWrapper(expr, getterCall)
                     || expr.contains(getterCall + ".isBlank()")
                     || expr.contains(getterCall + ".isEmpty()")
-                    || Pattern.compile("\\Q" + getterCall + "\\E\\s*==\\s*null")
-                            .matcher(expr).find()
+                    || matchesNullCheck(expr, getterCall)
                     || Pattern.compile("\\Q" + getterCall + "\\E\\s*!=\\s*null")
                             .matcher(expr).find();
 
@@ -254,9 +271,7 @@ public class TestDataAssembler {
                 continue;   // <-- the field is used but not predicated on
             }
 
-            boolean wantsNull = Pattern.compile(
-                    "\\Q" + getterCall + "\\E\\s*==\\s*null"
-            ).matcher(expr).find();
+            boolean wantsNull = matchesNullCheck(expr, getterCall);
 
             String value = wantsNull ? "null" : "\"\"";
 
@@ -294,12 +309,8 @@ public class TestDataAssembler {
         // always safe. But if we want a more targeted value, we can choose
         // "" for isBlank/isEmpty checks. Either works for `||` guards.
         boolean checksBlankish =
-                Pattern.compile("\\b" + Pattern.quote(name)
-                                + "\\s*\\.\\s*(isBlank|isEmpty)\\s*\\(")
-                        .matcher(expr).find()
-                || Pattern.compile("\\b(isBlank|isEmpty)\\s*\\(\\s*"
-                                   + Pattern.quote(name) + "\\s*\\)")
-                        .matcher(expr).find();
+                matchesBlankishMethodCall(expr, name)
+                || matchesBlankishWrapper(expr, name);
 
         if (checksBlankish) {
             // "" makes both isBlank and isEmpty true, and it also makes
@@ -358,8 +369,7 @@ public class TestDataAssembler {
         }
 
         // status.isBlank() / status.isEmpty() / status.isPresent() etc.
-        if (Pattern.compile("\\b" + Pattern.quote(name) + "\\s*\\.\\s*(isBlank|isEmpty)\\s*\\(")
-                .matcher(expression).find()) {
+        if (matchesBlankishMethodCall(expression, name)) {
             return true;
         }
 
@@ -435,11 +445,9 @@ public class TestDataAssembler {
 
             return "java.util.List.of()";
         }
-        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
-            return "java.util.Set.of()";
-        }
-        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
-            return "java.util.Map.of()";
+        String collectionDefault = TypeValueSupport.collectionDefault(type);
+        if (collectionDefault != null) {
+            return collectionDefault;
         }
 
         if (expression.startsWith("new ")) {

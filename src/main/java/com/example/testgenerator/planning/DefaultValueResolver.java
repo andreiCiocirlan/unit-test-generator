@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class DefaultValueResolver {
@@ -24,22 +25,29 @@ public class DefaultValueResolver {
         this.imports = imports == null ? List.of() : imports;
     }
 
+    /** Resolve a DTO type, or empty if sourceRoot is unset or the type is unknown. */
+    private Optional<DtoModel> resolveDto(String type) {
+        if (sourceRoot == null) return Optional.empty();
+        return dtoAnalyzer.resolve(type, sourceRoot, imports);
+    }
+
+    /** True if the DTO is a concrete class (not an interface or abstract class). */
+    private boolean isConcrete(DtoModel dto) {
+        return !dto.isInterface() && !dto.isAbstract();
+    }
+
     /** True if the type is concrete and instantiable with `new Type()`. */
     public boolean isInstantiableNoArg(String type) {
-        if (sourceRoot == null) return false;
-        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
-        if (dto.isEmpty()) return false;
-        var d = dto.get();
-        return !d.isInterface() && !d.isAbstract() && d.hasNoArgConstructor();
+        var d = resolveDto(type).orElse(null);
+        if (d == null) return false;
+        return isConcrete(d) && d.hasNoArgConstructor();
     }
 
     /** True if the type has an all-args constructor (value-object style). */
     public boolean isInstantiableAllArgs(String type) {
-        if (sourceRoot == null) return false;
-        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
-        if (dto.isEmpty()) return false;
-        var d = dto.get();
-        return !d.isInterface() && !d.isAbstract()
+        var d = resolveDto(type).orElse(null);
+        if (d == null) return false;
+        return isConcrete(d)
                && d.hasAllArgsConstructor()
                && !d.fields().isEmpty();
     }
@@ -49,16 +57,14 @@ public class DefaultValueResolver {
      * with defaults for each parameter. Otherwise return null.
      */
     public String allArgsConstructorInitializer(String type) {
-        if (sourceRoot == null) return null;
-        var dto = dtoAnalyzer.resolve(type, sourceRoot, imports);
-        if (dto.isEmpty()) return null;
-        var d = dto.get();
-        if (d.isInterface() || d.isAbstract() || !d.hasAllArgsConstructor()) {
+        var d = resolveDto(type).orElse(null);
+        if (d == null) return null;
+        if (!isConcrete(d) || !d.hasAllArgsConstructor()) {
             return null;
         }
 
         StringBuilder sb = new StringBuilder("new ")
-                .append(simpleNameOf(type))
+                .append(TypeValueSupport.simpleName(type))
                 .append("(");
         for (int i = 0; i < d.fields().size(); i++) {
             if (i > 0) sb.append(", ");
@@ -66,13 +72,6 @@ public class DefaultValueResolver {
         }
         sb.append(")");
         return sb.toString();
-    }
-
-    private String simpleNameOf(String type) {
-        int lt = type.indexOf('<');
-        String noGenerics = lt < 0 ? type : type.substring(0, lt);
-        int dot = noGenerics.lastIndexOf('.');
-        return dot < 0 ? noGenerics : noGenerics.substring(dot + 1);
     }
 
     /** Existing single-arg entry point: no field overrides. */
@@ -122,24 +121,17 @@ public class DefaultValueResolver {
         if (type.startsWith("Optional<")) {
             return "java.util.Optional.empty()";
         }
-        if (type.startsWith("List<") || type.startsWith("java.util.List<")) {
-            return "java.util.List.of()";
-        }
-        if (type.startsWith("Set<") || type.startsWith("java.util.Set<")) {
-            return "java.util.Set.of()";
-        }
-        if (type.startsWith("Map<") || type.startsWith("java.util.Map<")) {
-            return "java.util.Map.of()";
+        String collectionDefault = TypeValueSupport.collectionDefault(type);
+        if (collectionDefault != null) {
+            return collectionDefault;
         }
 
-        if (sourceRoot != null) {
-            var nested = dtoAnalyzer.resolve(type, sourceRoot, imports);
-            if (nested.isPresent()) {
-                return buildDtoInitializer(nested.get(), overrides);
-            }
+        var nested = resolveDto(type);
+        if (nested.isPresent()) {
+            return buildDtoInitializer(nested.get(), overrides);
         }
 
-        return "mock(" + eraseGenerics(type) + ".class)";
+        return "mock(" + TypeValueSupport.eraseGenerics(type) + ".class)";
     }
 
     private String buildDtoInitializer(
@@ -147,7 +139,7 @@ public class DefaultValueResolver {
             Map<String, String> overrides) {
 
         if (dto.hasBuilder()) {
-            StringBuilder sb = new StringBuilder(simpleName(dto.qualifiedName()))
+            StringBuilder sb = new StringBuilder(TypeValueSupport.simpleName(dto.qualifiedName()))
                     .append(".builder()");
             for (var f : dto.fields()) {
                 String value = overrides.containsKey(f.name())
@@ -160,16 +152,6 @@ public class DefaultValueResolver {
             return sb.toString();
         }
 
-        return "mock(" + simpleName(dto.qualifiedName()) + ".class)";
-    }
-
-    private String simpleName(String qualified) {
-        int dot = qualified.lastIndexOf('.');
-        return dot < 0 ? qualified : qualified.substring(dot + 1);
-    }
-
-    private String eraseGenerics(String type) {
-        int idx = type.indexOf('<');
-        return idx < 0 ? type : type.substring(0, idx);
+        return "mock(" + TypeValueSupport.simpleName(dto.qualifiedName()) + ".class)";
     }
 }

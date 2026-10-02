@@ -167,28 +167,19 @@ public class JavaTestRenderer {
 
         for (MockSetup setup : scenario.mockSetups()) {
 
-            if (setup.action() == MockAction.RETURN) {
-                source.append("        when(")
-                        .append(setup.dependency()).append(".")
-                        .append(setup.method()).append("(")
-                        .append(String.join(", ", setup.arguments()))
-                        .append("))")
-                        .append(".thenReturn(")
-                        .append(setup.value())
-                        .append(");\n");
-                continue;
-            }
+            String suffix = switch (setup.action()) {
+                case RETURN -> ".thenReturn(" + setup.value() + ");\n";
+                case THROW  -> ".thenThrow(" + setup.value() + ".class);\n";
+                case VERIFY -> null;
+            };
+            if (suffix == null) continue;
 
-            if (setup.action() == MockAction.THROW) {
-                source.append("        when(")
-                        .append(setup.dependency()).append(".")
-                        .append(setup.method()).append("(")
-                        .append(String.join(", ", setup.arguments()))
-                        .append("))")
-                        .append(".thenThrow(")
-                        .append(setup.value())
-                        .append(".class);\n");
-            }
+            source.append("        when(")
+                    .append(setup.dependency()).append(".")
+                    .append(setup.method()).append("(")
+                    .append(String.join(", ", setup.arguments()))
+                    .append("))")
+                    .append(suffix);
         }
 
         source.append("\n");

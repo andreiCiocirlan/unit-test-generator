@@ -27,6 +27,21 @@ public class MockSetupAssembler {
         this.valueResolver = valueResolver;
     }
 
+    private MockSetup mockSetup(
+            MethodCallModel call,
+            MethodModel method,
+            MockAction action,
+            String value) {
+        return new MockSetup(
+                call.target(),
+                call.targetType(),
+                call.methodName(),
+                matcherArguments(call.arguments(), method),
+                action,
+                value
+        );
+    }
+
     /**
      * Returns one or more setups for the given dependency call:
      *   - a RETURN setup if the call's result is used (assigned or returned)
@@ -48,14 +63,7 @@ public class MockSetupAssembler {
 
         // VERIFY setup — skipped inside loop-body conditionals.
         if (!insideLoopConditional) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    matcherArguments(call.arguments(), method),
-                    MockAction.VERIFY,
-                    ""
-            ));
+            setups.add(mockSetup(call, method, MockAction.VERIFY, ""));
         }
 
         return setups;
@@ -68,56 +76,26 @@ public class MockSetupAssembler {
         List<MockSetup> setups = new ArrayList<>();
 
         if (TypeValueSupport.isOptionalOrElseThrow(method, call)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    matcherArguments(call.arguments(), method),
-                    MockAction.RETURN,
+            setups.add(mockSetup(call, method, MockAction.RETURN,
                     "java.util.Optional.of("
                     + TypeValueSupport.expectedVariableName(method)
-                    + ")"
-            ));
+                    + ")"));
             return setups;
         }
 
         String value = findReturnValue(call, method);
 
         if (!"null".equals(value)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    matcherArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    value
-            ));
+            setups.add(mockSetup(call, method, MockAction.RETURN, value));
             return setups;
         }
 
         if (callResultIsUsed(call, method)) {
-            setups.add(new MockSetup(
-                    call.target(),
-                    call.targetType(),
-                    call.methodName(),
-                    matcherArguments(call.arguments(), method),
-                    MockAction.RETURN,
-                    TypeValueSupport.defaultValueFor(method.returnType())
-            ));
+            setups.add(mockSetup(call, method, MockAction.RETURN,
+                    TypeValueSupport.defaultValueFor(method.returnType())));
         }
 
         return setups;
-    }
-
-    private String resolveReturnValue(String type) {
-        if (valueResolver.isInstantiableNoArg(type)) {
-            return "new " + TypeValueSupport.simpleName(type) + "()";
-        }
-        if (valueResolver.isInstantiableAllArgs(type)) {
-            String init = valueResolver.allArgsConstructorInitializer(type);
-            if (init != null) return init;
-        }
-        return TypeValueSupport.defaultValueFor(type);
     }
 
     public List<MockSetup> forResultGetters(
@@ -132,7 +110,7 @@ public class MockSetupAssembler {
             for (MethodCallModel call : method.methodCalls()) {
                 if (call.kind() != CallKind.DEPENDENCY) continue;
 
-                String needle = call.target() + "." + call.methodName() + "(";
+                String needle = callSignature(call) + "(";
                 if (assignment.expression().contains(needle)) {
                     dependencyResultLocals.add(assignment.variableName());
                 }
@@ -157,7 +135,7 @@ public class MockSetupAssembler {
                 continue;
             }
 
-            // NEW: skip locals that are initialized as real instances.
+            // Skip locals that are initialized as real instances.
             // `new Type()` is not a mock, so `when(...)` on its getters
             // throws MissingMethodInvocationException.
             if (valueResolver.isInstantiableNoArg(localType)
@@ -194,13 +172,20 @@ public class MockSetupAssembler {
                + call.arguments();
     }
 
+    /**
+     * Returns the dotted signature of a call, e.g.
+     * {@code userRepository.findById}.
+     */
+    private String callSignature(MethodCallModel call) {
+        return call.target() + "." + call.methodName();
+    }
+
     public String findReturnValue(
             MethodCallModel call,
             MethodModel method) {
 
         return method.assignments().stream()
-                .filter(a -> a.expression().contains(
-                        call.target() + "." + call.methodName()))
+                .filter(a -> a.expression().contains(callSignature(call)))
                 .map(AssignmentModel::variableName)
                 .findFirst()
                 .orElse("null");
@@ -210,7 +195,7 @@ public class MockSetupAssembler {
             MethodCallModel call,
             MethodModel method) {
 
-        String needle = call.target() + "." + call.methodName() + "(";
+        String needle = callSignature(call) + "(";
 
         // Assigned to a variable?
         boolean assigned = method.assignments().stream()
@@ -295,6 +280,6 @@ public class MockSetupAssembler {
                 .anyMatch(assign -> method.methodCalls().stream()
                         .anyMatch(c -> c.kind() == CallKind.DEPENDENCY
                                        && assign.expression().contains(
-                                c.target() + "." + c.methodName() + "(")));
+                                callSignature(c) + "(")));
     }
 }
