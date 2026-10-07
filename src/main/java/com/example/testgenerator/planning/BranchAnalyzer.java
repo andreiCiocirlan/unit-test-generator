@@ -2,7 +2,10 @@ package com.example.testgenerator.planning;
 
 import com.example.testgenerator.analysis.ExpressionParser;
 import com.example.testgenerator.analysis.model.*;
-import com.example.testgenerator.planning.model.*;
+import com.example.testgenerator.planning.model.BranchModel;
+import com.example.testgenerator.planning.model.BranchOutcome;
+import com.example.testgenerator.planning.model.BranchOutcomeKind;
+import com.example.testgenerator.planning.model.BranchSetup;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
