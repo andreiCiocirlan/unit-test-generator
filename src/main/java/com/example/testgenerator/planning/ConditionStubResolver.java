@@ -1,8 +1,8 @@
 package com.example.testgenerator.planning;
 
 import com.example.testgenerator.analysis.ExpressionParser;
-import com.example.testgenerator.planning.model.BranchSetup;
 import com.example.testgenerator.analysis.model.ExprModel;
+import com.example.testgenerator.planning.model.BranchSetup;
 
 import java.util.ArrayList;
 import java.util.List;
